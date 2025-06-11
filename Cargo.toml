@@ -21,3 +21,4 @@ axum = { version = "0.7", features = ["ws"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+redb = "2.1"

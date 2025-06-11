@@ -10,6 +10,7 @@ use {
     chrono::{DateTime, Utc},
     futures::{stream::StreamExt, sink::SinkExt},
     log::{error, info, warn},
+    redb::{Database, TableDefinition, ReadableTable},
     serde::{Deserialize, Serialize},
     std::{
         collections::{HashMap, VecDeque},
@@ -33,6 +34,10 @@ use {
 // 常數定義
 const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
 const MAX_HISTORY_SIZE: usize = 10000;
+const DB_FILE: &str = "wallet_history.redb";
+
+// 資料庫表格定義
+const WALLET_HISTORY_TABLE: TableDefinition<&str, &str> = TableDefinition::new("wallet_history");
 
 // API 相關結構
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,6 +62,27 @@ struct BalanceHistory {
 struct ChartDataPoint {
     time: i64, // Unix timestamp in seconds
     value: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WalletHistoryRecord {
+    timestamp: DateTime<Utc>,
+    address: String,
+    sol_balance: f64,
+    wsol_balance: f64,
+    total_balance: f64,
+}
+
+impl WalletHistoryRecord {
+    fn new(address: String, sol_balance: f64, wsol_balance: f64) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            address,
+            sol_balance,
+            wsol_balance,
+            total_balance: sol_balance + wsol_balance,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -200,6 +226,27 @@ impl WalletBalance {
         }
     }
 
+    fn load_history_from_db(&mut self, records: Vec<WalletHistoryRecord>) {
+        self.history.clear();
+        for record in records {
+            let history_point = BalanceHistory {
+                timestamp: record.timestamp,
+                sol_balance: record.sol_balance,
+                wsol_balance: record.wsol_balance,
+                total_balance: record.total_balance,
+            };
+            self.history.push_back(history_point);
+        }
+        
+        // 注意：不從歷史記錄設置餘額，因為WSOL餘額可能過時
+        // 餘額將從RPC重新獲取以確保準確性
+        
+        // 限制歷史記錄大小
+        while self.history.len() > MAX_HISTORY_SIZE {
+            self.history.pop_front();
+        }
+    }
+
     fn to_summary(&self) -> WalletSummary {
         WalletSummary {
             address: self.address.clone(),
@@ -236,20 +283,115 @@ impl WalletBalance {
 }
 
 type SharedWallets = Arc<Mutex<HashMap<String, WalletBalance>>>;
+type SharedDatabase = Arc<Database>;
 
+// 應用狀態結構
+#[derive(Clone)]
+struct AppState {
+    wallets: SharedWallets,
+    database: SharedDatabase,
+}
+
+// 資料庫操作函數
+fn initialize_database() -> Result<Database, Box<dyn std::error::Error>> {
+    let db = Database::create(DB_FILE)?;
+    info!("📊 資料庫已初始化: {}", DB_FILE);
+    Ok(db)
+}
+
+fn save_wallet_history(db: &Database, record: &WalletHistoryRecord) -> Result<(), Box<dyn std::error::Error>> {
+    let write_txn = db.begin_write()?;
+    {
+        let mut table = write_txn.open_table(WALLET_HISTORY_TABLE)?;
+        let key = format!("{}_{}", record.address, record.timestamp.timestamp_millis());
+        let value = serde_json::to_string(record)?;
+        table.insert(key.as_str(), value.as_str())?;
+    }
+    write_txn.commit()?;
+    Ok(())
+}
+
+fn load_wallet_history(db: &Database, address: &str) -> Result<Vec<WalletHistoryRecord>, Box<dyn std::error::Error>> {
+    let read_txn = db.begin_read()?;
+    let table = read_txn.open_table(WALLET_HISTORY_TABLE)?;
+    let mut records = Vec::new();
+    
+    let prefix = format!("{}_", address);
+    let mut iter = table.iter()?;
+    
+    while let Some(entry) = iter.next() {
+        let (key, value) = entry?;
+        let key_str = key.value();
+        if key_str.starts_with(&prefix) {
+            let record: WalletHistoryRecord = serde_json::from_str(value.value())?;
+            records.push(record);
+        }
+    }
+    
+    // 按時間排序
+    records.sort_by_key(|r| r.timestamp);
+    Ok(records)
+}
+
+fn delete_wallet_history(db: &Database, address: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let write_txn = db.begin_write()?;
+    {
+        let mut table = write_txn.open_table(WALLET_HISTORY_TABLE)?;
+        let prefix = format!("{}_", address);
+        
+        // 收集需要刪除的鍵
+        let mut keys_to_delete = Vec::new();
+        let mut iter = table.iter()?;
+        while let Some(entry) = iter.next() {
+            let (key, _) = entry?;
+            let key_str = key.value();
+            if key_str.starts_with(&prefix) {
+                keys_to_delete.push(key_str.to_string());
+            }
+        }
+        
+        // 刪除找到的鍵
+        for key in keys_to_delete {
+            table.remove(key.as_str())?;
+        }
+    }
+    write_txn.commit()?;
+    info!("🗑️ 已刪除錢包 {} 的歷史數據", address);
+    Ok(())
+}
+
+fn load_all_wallet_history(db: &Database) -> Result<HashMap<String, Vec<WalletHistoryRecord>>, Box<dyn std::error::Error>> {
+    let read_txn = db.begin_read()?;
+    let table = read_txn.open_table(WALLET_HISTORY_TABLE)?;
+    let mut wallet_records: HashMap<String, Vec<WalletHistoryRecord>> = HashMap::new();
+    
+    let mut iter = table.iter()?;
+    while let Some(entry) = iter.next() {
+        let (_, value) = entry?;
+        let record: WalletHistoryRecord = serde_json::from_str(value.value())?;
+        wallet_records.entry(record.address.clone()).or_insert_with(Vec::new).push(record);
+    }
+    
+    // 對每個錢包的記錄按時間排序
+    for records in wallet_records.values_mut() {
+        records.sort_by_key(|r| r.timestamp);
+    }
+    
+    Ok(wallet_records)
+}
 
 // Web API handlers
-async fn get_wallets(wallets: axum::extract::State<SharedWallets>) -> Json<Vec<WalletSummary>> {
-    let wallets_guard = wallets.lock().unwrap();
+async fn get_wallets(axum::extract::State(state): axum::extract::State<AppState>) -> Json<Vec<WalletSummary>> {
+    let wallets_guard = state.wallets.lock().unwrap();
     let summaries: Vec<WalletSummary> = wallets_guard.values().map(|w| w.to_summary()).collect();
     Json(summaries)
 }
 
 async fn get_wallet_detail(
     Path(address): Path<String>,
-    wallets: axum::extract::State<SharedWallets>,
+    axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Result<Json<WalletSummary>, StatusCode> {
-    let wallets_guard = wallets.lock().unwrap();
+    let wallets_guard = state.wallets.lock().unwrap();
     match wallets_guard.get(&address) {
         Some(wallet) => Ok(Json(wallet.to_summary())),
         None => Err(StatusCode::NOT_FOUND),
@@ -258,9 +400,9 @@ async fn get_wallet_detail(
 
 async fn get_chart_data(
     Query(params): Query<ChartQueryParams>,
-    wallets: axum::extract::State<SharedWallets>,
+    axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Result<Json<Vec<ChartDataPoint>>, StatusCode> {
-    let wallets_guard = wallets.lock().unwrap();
+    let wallets_guard = state.wallets.lock().unwrap();
     let wallet = wallets_guard.get(&params.wallet).ok_or(StatusCode::NOT_FOUND)?;
     
     let mut history: Vec<_> = wallet.history.iter().collect();
@@ -361,7 +503,7 @@ async fn get_chart_data(
 }
 
 async fn add_wallet(
-    axum::extract::State(wallets): axum::extract::State<SharedWallets>,
+    axum::extract::State(state): axum::extract::State<AppState>,
     Json(request): Json<AddWalletRequest>,
 ) -> Result<Json<ApiResponse>, (StatusCode, Json<ErrorResponse>)> {
     let name = request.name.trim();
@@ -388,7 +530,7 @@ async fn add_wallet(
     
     // 檢查錢包是否已存在
     {
-        let wallets_guard = wallets.lock().unwrap();
+        let wallets_guard = state.wallets.lock().unwrap();
         if wallets_guard.contains_key(address) {
             return Err((StatusCode::CONFLICT, Json(ErrorResponse {
                 error: "此錢包地址已存在".to_string(),
@@ -416,8 +558,18 @@ async fn add_wallet(
             new_wallet.initialize_wsol(wsol_balance);
             
             // 添加到錢包列表
+            // 保存初始記錄到資料庫
+            let initial_record = WalletHistoryRecord::new(
+                address.to_string(),
+                new_wallet.sol_balance,
+                new_wallet.wsol_balance,
+            );
+            if let Err(e) = save_wallet_history(&state.database, &initial_record) {
+                warn!("⚠️ 保存初始歷史記錄失敗: {}", e);
+            }
+
             {
-                let mut wallets_guard = wallets.lock().unwrap();
+                let mut wallets_guard = state.wallets.lock().unwrap();
                 wallets_guard.insert(address.to_string(), new_wallet);
             }
             
@@ -444,10 +596,10 @@ async fn add_wallet(
 
 async fn delete_wallet(
     Path(address): Path<String>,
-    axum::extract::State(wallets): axum::extract::State<SharedWallets>,
+    axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Result<Json<ApiResponse>, (StatusCode, Json<ErrorResponse>)> {
     let wallet_name = {
-        let mut wallets_guard = wallets.lock().unwrap();
+        let mut wallets_guard = state.wallets.lock().unwrap();
         if let Some(wallet) = wallets_guard.remove(&address) {
             wallet.name.clone()
         } else {
@@ -456,6 +608,11 @@ async fn delete_wallet(
             })));
         }
     };
+    
+    // 刪除資料庫中的歷史記錄
+    if let Err(e) = delete_wallet_history(&state.database, &address) {
+        warn!("⚠️ 刪除錢包歷史記錄失敗: {}", e);
+    }
     
     // 更新配置文件
     if let Err(e) = remove_from_config_file(&address).await {
@@ -472,9 +629,9 @@ async fn delete_wallet(
 
 async fn websocket_handler(
     ws: WebSocketUpgrade,
-    axum::extract::State(wallets): axum::extract::State<SharedWallets>,
+    axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Response {
-    ws.on_upgrade(|socket| websocket_connection(socket, wallets))
+    ws.on_upgrade(|socket| websocket_connection(socket, state.wallets))
 }
 
 async fn websocket_connection(mut socket: WebSocket, wallets: SharedWallets) {
@@ -506,8 +663,6 @@ async fn websocket_connection(mut socket: WebSocket, wallets: SharedWallets) {
 async fn serve_index() -> Html<&'static str> {
     Html(include_str!("../web/index.html"))
 }
-
-
 
 // 讀取配置檔案
 fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
@@ -583,34 +738,34 @@ async fn query_wallet_balance(wallet_address: &str) -> Result<(f64, f64), Box<dy
     Ok((sol_balance, wsol_balance))
 }
 
-// 初始化所有錢包餘額
-async fn initialize_wallets(wallets: &mut HashMap<String, WalletBalance>) {
+// 從RPC初始化所有錢包餘額
+async fn initialize_wallets_from_rpc(wallets: &mut HashMap<String, WalletBalance>, db: &Database) {
     let wallet_count = wallets.len();
-    info!("🔄 開始初始化 {} 個錢包，每個錢包間隔15秒確保API穩定性", wallet_count);
+    info!("🔄 開始從RPC獲取 {} 個錢包的最新餘額，每個錢包間隔15秒確保API穩定性", wallet_count);
     
     let mut processed_count = 0;
     
     for (address, wallet) in wallets.iter_mut() {
         processed_count += 1;
-        info!("📋 正在初始化錢包 {}/{}: {} ({})", processed_count, wallet_count, wallet.name, &address[..8]);
+        info!("📋 正在獲取錢包 {}/{} 的最新餘額: {} ({})", processed_count, wallet_count, wallet.name, &address[..8]);
         
-        // 先初始化SOL餘額
+        // 從RPC獲取最新的SOL和WSOL餘額
         match query_wallet_balance(address).await {
             Ok((sol_balance, wsol_balance)) => {
                 wallet.update_sol((sol_balance * 1_000_000_000.0) as u64);
                 wallet.initialize_wsol(wsol_balance);
-                info!("   📊 SOL: {:.6}, WSOL: {:.6}", sol_balance, wsol_balance);
+                info!("   📊 最新餘額 - SOL: {:.6}, WSOL: {:.6}", sol_balance, wsol_balance);
             }
             Err(e) => {
-                error!("❌ 初始化錢包 {} 的SOL和WSOL失敗: {}", wallet.name, e);
-                // 即使查詢失敗，也要獲取WSOL餘額
+                error!("❌ 獲取錢包 {} 的SOL和WSOL餘額失敗: {}", wallet.name, e);
+                // 即使SOL查詢失敗，也要嘗試獲取WSOL餘額
                 match query_wsol_balance(address).await {
                     Ok(wsol_balance) => {
                         wallet.initialize_wsol(wsol_balance);
                         info!("   📊 SOL查詢失敗，但成功獲取WSOL: {:.6}", wsol_balance);
                     }
                     Err(wsol_err) => {
-                        error!("❌ 初始化錢包 {} 的WSOL也失敗: {}", wallet.name, wsol_err);
+                        error!("❌ 獲取錢包 {} 的WSOL餘額也失敗: {}", wallet.name, wsol_err);
                         // 設置為0以避免未初始化狀態
                         wallet.initialize_wsol(0.0);
                     }
@@ -618,19 +773,29 @@ async fn initialize_wallets(wallets: &mut HashMap<String, WalletBalance>) {
             }
         }
         
-        wallet.print_balance("初始化");
+        wallet.print_balance("RPC初始化");
+        
+        // 保存最新餘額記錄到資料庫
+        if wallet.wsol_initialized {
+            let current_record = WalletHistoryRecord::new(
+                wallet.address.clone(),
+                wallet.sol_balance,
+                wallet.wsol_balance,
+            );
+            if let Err(e) = save_wallet_history(db, &current_record) {
+                warn!("⚠️ 保存最新餘額記錄失敗 {}: {}", wallet.name, e);
+            }
+        }
         
         // 等待15秒確保API穩定性
         if processed_count < wallet_count {
-            info!("⏳ 等待15秒後初始化下一個錢包...");
+            info!("⏳ 等待15秒後處理下一個錢包...");
             tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
         }
     }
     
-    info!("✅ 錢包初始化完成！");
+    info!("✅ 所有錢包的最新餘額獲取完成！");
 }
-
-
 
 // 查詢WSOL餘額
 async fn query_wsol_balance(wallet_address: &str) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
@@ -672,6 +837,7 @@ async fn query_wsol_balance(wallet_address: &str) -> Result<f64, Box<dyn std::er
 fn handle_transaction_update(
     update: SubscribeUpdate,
     wallets: &mut HashMap<String, WalletBalance>,
+    db: &Database,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(UpdateOneof::Transaction(tx_update)) = update.update_oneof {
         if let Some(transaction) = tx_update.transaction {
@@ -693,6 +859,13 @@ fn handle_transaction_update(
                                     
                                     if (wallet.sol_balance - old_balance).abs() > 0.000001 {
                                         wallet.print_balance("SOL交易");
+                                        // 保存到資料庫
+                                        let record = WalletHistoryRecord::new(
+                                            wallet.address.clone(),
+                                            wallet.sol_balance,
+                                            wallet.wsol_balance,
+                                        );
+                                        let _ = save_wallet_history(db, &record);
                                     }
                                 }
                             }
@@ -732,6 +905,13 @@ fn handle_transaction_update(
                                             
                                             wallet.update_wsol(new_wsol_balance);
                                             wallet.print_balance("WSOL交易");
+                                            // 保存到資料庫
+                                            let record = WalletHistoryRecord::new(
+                                                wallet.address.clone(),
+                                                wallet.sol_balance,
+                                                wallet.wsol_balance,
+                                            );
+                                            let _ = save_wallet_history(db, &record);
                                         }
                                     }
                                 }
@@ -833,6 +1013,7 @@ async fn remove_from_config_file(address: &str) -> Result<(), Box<dyn std::error
 async fn create_grpc_stream(
     grpc_endpoint: String,
     wallets: SharedWallets,
+    db: SharedDatabase,
 ) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         info!("🔄 嘗試連接到 gRPC 端點: {}", grpc_endpoint);
@@ -900,7 +1081,7 @@ async fn create_grpc_stream(
                                         Ok(update) => {
                                             {
                                                 let mut wallets_guard = wallets.lock().unwrap();
-                                                if let Err(e) = handle_transaction_update(update, &mut wallets_guard) {
+                                                if let Err(e) = handle_transaction_update(update, &mut wallets_guard, &db) {
                                                     warn!("⚠️ 處理交易更新時出錯: {}", e);
                                                 }
                                             }
@@ -941,17 +1122,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("🚀 SOL錢包監控器啟動");
     info!("📊 監控 {} 個錢包", config.wallets.len());
     
+    // 初始化資料庫
+    let database = match initialize_database() {
+        Ok(db) => Arc::new(db),
+        Err(e) => {
+            error!("❌ 資料庫初始化失敗: {}", e);
+            return Err(e);
+        }
+    };
+
+    // 載入歷史資料
+    let history_data = match load_all_wallet_history(&database) {
+        Ok(data) => {
+            info!("📖 成功載入歷史資料，包含 {} 個錢包的記錄", data.len());
+            data
+        }
+        Err(e) => {
+            warn!("⚠️ 載入歷史資料失敗: {}，將從空白開始", e);
+            HashMap::new()
+        }
+    };
+
     // 初始化錢包追蹤器
     let mut wallets_map = HashMap::new();
     for wallet_config in config.wallets {
-        let wallet = WalletBalance::new(wallet_config.address.clone(), wallet_config.name);
+        let mut wallet = WalletBalance::new(wallet_config.address.clone(), wallet_config.name);
+        
+        // 從資料庫載入歷史數據（但不使用WSOL餘額，因為可能過時）
+        if let Some(records) = history_data.get(&wallet_config.address) {
+            info!("📚 為錢包 {} 載入 {} 條歷史記錄", wallet.name, records.len());
+            wallet.load_history_from_db(records.clone());
+        }
+        
         wallets_map.insert(wallet_config.address, wallet);
     }
     
-    // 初始化錢包餘額
-    initialize_wallets(&mut wallets_map).await;
+    // 所有錢包都需要從RPC獲取最新的SOL和WSOL餘額，確保數據準確性
+    info!("🔄 正在從RPC獲取所有錢包的最新餘額...");
+    initialize_wallets_from_rpc(&mut wallets_map, &database).await;
     
     let shared_wallets = Arc::new(Mutex::new(wallets_map));
+    
+    // 創建應用狀態
+    let app_state = AppState {
+        wallets: shared_wallets.clone(),
+        database: database.clone(),
+    };
     
     // 創建Web應用
     let app = Router::new()
@@ -961,13 +1177,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/chart", get(get_chart_data))
         .route("/ws", get(websocket_handler))
         .layer(CorsLayer::permissive())
-        .with_state(shared_wallets.clone());
+        .with_state(app_state);
     
     // 啟動背景任務
     let grpc_wallets = shared_wallets.clone();
+    let grpc_database = database.clone();
     let grpc_endpoint = config.grpc.endpoint.clone();
     tokio::spawn(async move {
-        if let Err(e) = create_grpc_stream(grpc_endpoint, grpc_wallets).await {
+        if let Err(e) = create_grpc_stream(grpc_endpoint, grpc_wallets, grpc_database).await {
             error!("❌ gRPC 流任務失敗: {}", e);
         }
     });
