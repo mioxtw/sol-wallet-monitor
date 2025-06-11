@@ -1,0 +1,23 @@
+# SOL 錢包監控配置
+
+# gRPC 服務器配置
+[grpc]
+endpoint = "http://127.0.0.1:10000"
+
+# 監控的錢包列表
+[[wallets]]
+address = "7dGrdJRYtsNR8UYxZ3TnifXGjGc9eRYLq9sELwYpuuUu"
+name = "主要錢包"
+
+[[wallets]]
+address = "As516ZAsiAzTQuR5JTP5oEucPb3irbQf4tBxKx3MDMpa"
+name = "測試錢包"
+
+# 可以添加更多錢包
+# [[wallets]]
+# address = "您的錢包地址"
+# name = "錢包名稱"
+
+# 日誌設定
+[logging]
+level = "info" 
