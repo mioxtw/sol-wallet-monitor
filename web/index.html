@@ -170,6 +170,20 @@
             font-family: monospace;
         }
 
+        .clickable-address {
+            cursor: pointer;
+            transition: all 0.3s ease;
+            padding: 2px 6px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .clickable-address:hover {
+            opacity: 1;
+            background: rgba(255, 255, 255, 0.2);
+            transform: scale(1.05);
+        }
+
         .wallet-balance {
             font-size: 1.2rem;
             font-weight: bold;
@@ -913,7 +927,7 @@
                     walletEl.innerHTML = `
                         <button class="delete-wallet-btn" title="刪除錢包">&times;</button>
                         <div class="wallet-name">${wallet.name}</div>
-                        <div class="wallet-address">${wallet.address.substring(0, 8)}...${wallet.address.substring(wallet.address.length-8)}</div>
+                        <div class="wallet-address clickable-address" data-address="${wallet.address}" title="點擊複製完整地址">${wallet.address.substring(0, 8)}...${wallet.address.substring(wallet.address.length-8)}</div>
                         <div class="wallet-balance">${wallet.total_balance.toFixed(6)} SOL</div>
                         <div class="wallet-update-time">更新時間: ${updateTime}</div>
                     `;
@@ -930,6 +944,13 @@
                     deleteBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         this.deleteWallet(wallet.address, wallet.name);
+                    });
+
+                    // 地址點擊複製事件
+                    const addressEl = walletEl.querySelector('.clickable-address');
+                    addressEl.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.copyAddressToClipboard(wallet.address, addressEl);
                     });
                     
                     this.walletListEl.appendChild(walletEl);
@@ -1078,6 +1099,89 @@
                 } else {
                     this.statusIndicatorEl.className = 'status-indicator status-disconnected';
                     this.statusTextEl.textContent = '連接中斷';
+                }
+            }
+
+            // 複製地址到剪貼簿
+            async copyAddressToClipboard(address, element) {
+                try {
+                    await navigator.clipboard.writeText(address);
+                    
+                    // 顯示複製成功的視覺反饋
+                    const originalText = element.textContent;
+                    const originalBackground = element.style.background;
+                    
+                    element.textContent = '已複製!';
+                    element.style.background = 'rgba(76, 175, 80, 0.8)';
+                    element.style.color = 'white';
+                    
+                    // 2秒後恢復原狀
+                    setTimeout(() => {
+                        element.textContent = originalText;
+                        element.style.background = originalBackground;
+                        element.style.color = '';
+                    }, 2000);
+                    
+                    console.log('地址已複製到剪貼簿:', address);
+                } catch (err) {
+                    console.error('複製到剪貼簿失敗:', err);
+                    
+                    // 如果clipboard API不可用，使用fallback方法
+                    this.fallbackCopyToClipboard(address, element);
+                }
+            }
+
+            // Fallback複製方法（適用於不支援clipboard API的瀏覽器）
+            fallbackCopyToClipboard(address, element) {
+                try {
+                    const textArea = document.createElement('textarea');
+                    textArea.value = address;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-9999px';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    
+                    const success = document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    
+                    if (success) {
+                        // 顯示複製成功的視覺反饋
+                        const originalText = element.textContent;
+                        const originalBackground = element.style.background;
+                        
+                        element.textContent = '已複製!';
+                        element.style.background = 'rgba(76, 175, 80, 0.8)';
+                        element.style.color = 'white';
+                        
+                        // 2秒後恢復原狀
+                        setTimeout(() => {
+                            element.textContent = originalText;
+                            element.style.background = originalBackground;
+                            element.style.color = '';
+                        }, 2000);
+                        
+                        console.log('地址已複製到剪貼簿 (fallback):', address);
+                    } else {
+                        throw new Error('execCommand failed');
+                    }
+                } catch (err) {
+                    console.error('Fallback複製方法也失敗:', err);
+                    
+                    // 最後的fallback：顯示地址讓用戶手動複製
+                    const originalText = element.textContent;
+                    element.textContent = address;
+                    element.style.background = 'rgba(255, 193, 7, 0.8)';
+                    element.style.color = 'black';
+                    
+                    // 5秒後恢復原狀
+                    setTimeout(() => {
+                        element.textContent = originalText;
+                        element.style.background = '';
+                        element.style.color = '';
+                    }, 5000);
+                    
+                    alert('無法自動複製，地址已暫時顯示，請手動複製:\n' + address);
                 }
             }
 

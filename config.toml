@@ -30,10 +30,6 @@ name = "HodL"
 address = "8MgCrWgTYD14ySiYU5iEotwiNSrFcLhykyVwJhFmy5kH"
 name = "8Mg"
 
-[[wallets]]
-address = "As516ZAsiAzTQuR5JTP5oEucPb3irbQf4tBxKx3MDMpa"
-name = "As51"
-
 # 可以添加更多錢包
 # [[wallets]]
 # address = "您的錢包地址"
@@ -43,3 +39,11 @@ name = "As51"
 [logging]
 level = "info" 
 
+
+[[wallets]]
+address = "ALBzE7T2wwaTA8ngCww2R5EzD5C1HjpwHDru2UN6YSeb"
+name = "ALB"
+
+[[wallets]]
+address = "As516ZAsiAzTQuR5JTP5oEucPb3irbQf4tBxKx3MDMpa"
+name = "As51"
