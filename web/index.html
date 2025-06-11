@@ -74,10 +74,38 @@
             opacity: 0.8;
         }
 
-        .wallet-list h2 {
+        .wallet-list-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 20px;
+        }
+
+        .wallet-list h2 {
+            margin: 0;
             font-size: 1.3rem;
             color: #ffd700;
+        }
+
+        .add-wallet-btn {
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #4facfe, #00f2fe);
+            border: none;
+            color: white;
+            font-size: 1.2rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .add-wallet-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);
         }
 
         .wallet-item {
@@ -88,6 +116,7 @@
             cursor: pointer;
             transition: all 0.3s ease;
             border: 2px solid transparent;
+            position: relative;
         }
 
         .wallet-item:hover {
@@ -98,6 +127,34 @@
         .wallet-item.active {
             border-color: #ffd700;
             background: rgba(255, 215, 0, 0.15);
+        }
+
+        .delete-wallet-btn {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #ff4757;
+            border: 2px solid white;
+            color: white;
+            font-size: 0.8rem;
+            font-weight: bold;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .wallet-item:hover .delete-wallet-btn {
+            display: flex;
+        }
+
+        .delete-wallet-btn:hover {
+            background: #ff3838;
+            transform: scale(1.1);
         }
 
         .wallet-name {
@@ -335,6 +392,156 @@
             opacity: 0.6;
             margin-top: 5px;
         }
+
+        /* 彈窗樣式 */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 10% auto;
+            padding: 0;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            animation: modalSlideIn 0.3s ease;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 25px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            color: white;
+            font-size: 1.4rem;
+        }
+
+        .close {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 1.8rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: color 0.3s ease;
+        }
+
+        .close:hover {
+            color: white;
+        }
+
+        .modal-body {
+            padding: 25px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: white;
+            font-weight: bold;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            box-sizing: border-box;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #4facfe;
+            background: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 0 10px rgba(79, 172, 254, 0.3);
+        }
+
+        .form-group input::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .error-message {
+            color: #ff6b6b;
+            font-size: 0.9rem;
+            margin-top: 5px;
+            display: none;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 20px 25px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .btn-cancel {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        .btn-cancel:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .btn-primary {
+            background: linear-gradient(45deg, #4facfe, #00f2fe);
+            color: white;
+            font-weight: bold;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            transform: none;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -348,7 +555,10 @@
 
             
             <div class="wallet-list">
-                <h2>錢包列表</h2>
+                <div class="wallet-list-header">
+                    <h2>錢包列表</h2>
+                    <button class="add-wallet-btn" id="addWalletBtn" title="新增錢包">+</button>
+                </div>
                 <div id="walletList"></div>
             </div>
         </div>
@@ -407,6 +617,31 @@
         </div>
     </div>
 
+    <!-- 新增錢包彈窗 -->
+    <div class="modal" id="addWalletModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>新增錢包</h3>
+                <span class="close" id="closeModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="walletName">錢包名稱:</label>
+                    <input type="text" id="walletName" placeholder="請輸入錢包名稱" maxlength="20">
+                </div>
+                <div class="form-group">
+                    <label for="walletAddress">錢包地址:</label>
+                    <input type="text" id="walletAddress" placeholder="請輸入Solana錢包地址" maxlength="44">
+                </div>
+                <div class="error-message" id="errorMessage"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-cancel" id="cancelBtn">取消</button>
+                <button class="btn btn-primary" id="saveWalletBtn">新增</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         class WalletMonitor {
             constructor() {
@@ -436,6 +671,16 @@
                 this.timeIntervalButtonsEl = document.getElementById('timeIntervalButtons');
                 this.statusIndicatorEl = document.getElementById('statusIndicator');
                 this.statusTextEl = document.getElementById('statusText');
+                
+                // 彈窗元素
+                this.addWalletBtnEl = document.getElementById('addWalletBtn');
+                this.addWalletModalEl = document.getElementById('addWalletModal');
+                this.closeModalEl = document.getElementById('closeModal');
+                this.walletNameEl = document.getElementById('walletName');
+                this.walletAddressEl = document.getElementById('walletAddress');
+                this.saveWalletBtnEl = document.getElementById('saveWalletBtn');
+                this.cancelBtnEl = document.getElementById('cancelBtn');
+                this.errorMessageEl = document.getElementById('errorMessage');
                 
                 // 設置預設值 - 預設顯示總計(SOL+WSOL)
                 this.activeDataTypes = new Set(['total']);
@@ -472,6 +717,30 @@
                         e.target.classList.add('active');
                         this.currentTimeInterval = e.target.dataset.interval;
                         this.updateChart();
+                    }
+                });
+
+                // 彈窗事件
+                this.addWalletBtnEl.addEventListener('click', () => this.showAddWalletModal());
+                this.closeModalEl.addEventListener('click', () => this.hideAddWalletModal());
+                this.cancelBtnEl.addEventListener('click', () => this.hideAddWalletModal());
+                this.saveWalletBtnEl.addEventListener('click', () => this.saveWallet());
+                
+                // 點擊彈窗外部關閉
+                this.addWalletModalEl.addEventListener('click', (e) => {
+                    if (e.target === this.addWalletModalEl) {
+                        this.hideAddWalletModal();
+                    }
+                });
+
+                // 輸入驗證
+                this.walletNameEl.addEventListener('input', () => this.validateForm());
+                this.walletAddressEl.addEventListener('input', () => this.validateForm());
+
+                // 按Enter鍵提交
+                this.walletAddressEl.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !this.saveWalletBtnEl.disabled) {
+                        this.saveWallet();
                     }
                 });
             }
@@ -642,13 +911,27 @@
                     const updateTime = new Date(wallet.last_update).toLocaleString('zh-TW');
                     
                     walletEl.innerHTML = `
+                        <button class="delete-wallet-btn" title="刪除錢包">&times;</button>
                         <div class="wallet-name">${wallet.name}</div>
                         <div class="wallet-address">${wallet.address.substring(0, 8)}...${wallet.address.substring(wallet.address.length-8)}</div>
                         <div class="wallet-balance">${wallet.total_balance.toFixed(6)} SOL</div>
                         <div class="wallet-update-time">更新時間: ${updateTime}</div>
                     `;
                     
-                    walletEl.addEventListener('click', () => this.selectWallet(wallet));
+                    // 錢包項目點擊事件
+                    walletEl.addEventListener('click', (e) => {
+                        if (!e.target.classList.contains('delete-wallet-btn')) {
+                            this.selectWallet(wallet);
+                        }
+                    });
+
+                    // 刪除按鈕事件
+                    const deleteBtn = walletEl.querySelector('.delete-wallet-btn');
+                    deleteBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.deleteWallet(wallet.address, wallet.name);
+                    });
+                    
                     this.walletListEl.appendChild(walletEl);
                 });
             }
@@ -795,6 +1078,140 @@
                 } else {
                     this.statusIndicatorEl.className = 'status-indicator status-disconnected';
                     this.statusTextEl.textContent = '連接中斷';
+                }
+            }
+
+            // 錢包管理方法
+            showAddWalletModal() {
+                this.addWalletModalEl.style.display = 'block';
+                this.walletNameEl.value = '';
+                this.walletAddressEl.value = '';
+                this.errorMessageEl.style.display = 'none';
+                this.validateForm();
+                this.walletNameEl.focus();
+            }
+
+            hideAddWalletModal() {
+                this.addWalletModalEl.style.display = 'none';
+            }
+
+            validateForm() {
+                const name = this.walletNameEl.value.trim();
+                const address = this.walletAddressEl.value.trim();
+                
+                // 檢查名稱
+                if (!name) {
+                    this.showError('請輸入錢包名稱');
+                    return false;
+                }
+
+                // 檢查地址格式 (Solana地址應該是43-44個字符的base58)
+                if (!address) {
+                    this.showError('請輸入錢包地址');
+                    return false;
+                }
+
+                if (address.length < 32 || address.length > 44) {
+                    this.showError('錢包地址長度不正確');
+                    return false;
+                }
+
+                // 檢查地址是否已存在
+                if (this.wallets.some(w => w.address === address)) {
+                    this.showError('此錢包地址已存在');
+                    return false;
+                }
+
+                // 檢查名稱是否已存在
+                if (this.wallets.some(w => w.name === name)) {
+                    this.showError('此錢包名稱已存在');
+                    return false;
+                }
+
+                this.hideError();
+                this.saveWalletBtnEl.disabled = false;
+                return true;
+            }
+
+            showError(message) {
+                this.errorMessageEl.textContent = message;
+                this.errorMessageEl.style.display = 'block';
+                this.saveWalletBtnEl.disabled = true;
+            }
+
+            hideError() {
+                this.errorMessageEl.style.display = 'none';
+            }
+
+            async saveWallet() {
+                if (!this.validateForm()) return;
+
+                const name = this.walletNameEl.value.trim();
+                const address = this.walletAddressEl.value.trim();
+
+                this.saveWalletBtnEl.disabled = true;
+                this.saveWalletBtnEl.textContent = '新增中...';
+
+                try {
+                    const response = await fetch('/api/wallets', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            name: name,
+                            address: address
+                        })
+                    });
+
+                    if (response.ok) {
+                        console.log('錢包新增成功');
+                        this.hideAddWalletModal();
+                        // 重新載入錢包列表
+                        this.loadWallets();
+                    } else {
+                        const errorData = await response.json();
+                        this.showError(errorData.error || '新增錢包失敗');
+                    }
+                } catch (error) {
+                    console.error('新增錢包失敗:', error);
+                    this.showError('網路錯誤，請稍後再試');
+                } finally {
+                    this.saveWalletBtnEl.disabled = false;
+                    this.saveWalletBtnEl.textContent = '新增';
+                }
+            }
+
+            async deleteWallet(address, name) {
+                if (!confirm(`確定要刪除錢包 "${name}" 嗎？`)) {
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/api/wallets/${encodeURIComponent(address)}`, {
+                        method: 'DELETE'
+                    });
+
+                    if (response.ok) {
+                        console.log('錢包刪除成功');
+                        
+                        // 如果刪除的是當前選中的錢包，清除選中狀態
+                        if (this.selectedWallet && this.selectedWallet.address === address) {
+                            this.selectedWallet = null;
+                            this.balanceSectionEl.style.display = 'none';
+                            this.loadingTextEl.style.display = 'block';
+                            this.loadingTextEl.textContent = '請選擇一個錢包查看圖表';
+                        }
+                        
+                        // 重新載入錢包列表
+                        this.loadWallets();
+                    } else {
+                        const errorData = await response.json();
+                        alert(errorData.error || '刪除錢包失敗');
+                    }
+                } catch (error) {
+                    console.error('刪除錢包失敗:', error);
+                    alert('網路錯誤，請稍後再試');
                 }
             }
         }

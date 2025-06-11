@@ -3,7 +3,7 @@ use {
         extract::{Path, Query, ws::{WebSocket, WebSocketUpgrade}},
         http::StatusCode,
         response::{Html, Response},
-        routing::{get},
+        routing::{get, post, delete},
         Json, Router,
     },
     bs58,
@@ -64,6 +64,23 @@ struct ChartQueryParams {
     wallet: String,
     data_type: String, // "sol", "wsol", or "total"
     interval: String,  // "5M", "10M", "30M", "1H", "2H", "4H", "8H", "12H", "1D", "1W", "ALL"
+}
+
+#[derive(Debug, Deserialize)]
+struct AddWalletRequest {
+    name: String,
+    address: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiResponse {
+    success: bool,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ErrorResponse {
+    error: String,
 }
 
 // 配置結構
@@ -343,6 +360,116 @@ async fn get_chart_data(
     Ok(Json(chart_data))
 }
 
+async fn add_wallet(
+    axum::extract::State(wallets): axum::extract::State<SharedWallets>,
+    Json(request): Json<AddWalletRequest>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let name = request.name.trim();
+    let address = request.address.trim();
+    
+    // 驗證輸入
+    if name.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+            error: "錢包名稱不能為空".to_string(),
+        })));
+    }
+    
+    if address.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+            error: "錢包地址不能為空".to_string(),
+        })));
+    }
+    
+    if address.len() < 32 || address.len() > 44 {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+            error: "錢包地址長度不正確".to_string(),
+        })));
+    }
+    
+    // 檢查錢包是否已存在
+    {
+        let wallets_guard = wallets.lock().unwrap();
+        if wallets_guard.contains_key(address) {
+            return Err((StatusCode::CONFLICT, Json(ErrorResponse {
+                error: "此錢包地址已存在".to_string(),
+            })));
+        }
+        
+        // 檢查名稱是否已存在
+        for wallet in wallets_guard.values() {
+            if wallet.name == name {
+                return Err((StatusCode::CONFLICT, Json(ErrorResponse {
+                    error: "此錢包名稱已存在".to_string(),
+                })));
+            }
+        }
+    }
+    
+    // 創建新錢包
+    let new_wallet = WalletBalance::new(address.to_string(), name.to_string());
+    
+    // 嘗試初始化錢包餘額
+    match query_wallet_balance(address).await {
+        Ok((sol_balance, wsol_balance)) => {
+            let mut new_wallet = new_wallet;
+            new_wallet.update_sol((sol_balance * 1_000_000_000.0) as u64);
+            new_wallet.initialize_wsol(wsol_balance);
+            
+            // 添加到錢包列表
+            {
+                let mut wallets_guard = wallets.lock().unwrap();
+                wallets_guard.insert(address.to_string(), new_wallet);
+            }
+            
+            // 更新配置文件
+            if let Err(e) = update_config_file(address, name).await {
+                warn!("⚠️ 更新配置文件失敗: {}", e);
+            }
+            
+            info!("✅ 成功新增錢包: {} ({})", name, &address[..8]);
+            
+            Ok(Json(ApiResponse {
+                success: true,
+                message: format!("成功新增錢包 {}", name),
+            }))
+        }
+        Err(e) => {
+            error!("❌ 初始化錢包餘額失敗: {}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+                error: "無法獲取錢包餘額，請檢查地址是否正確".to_string(),
+            })))
+        }
+    }
+}
+
+async fn delete_wallet(
+    Path(address): Path<String>,
+    axum::extract::State(wallets): axum::extract::State<SharedWallets>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let wallet_name = {
+        let mut wallets_guard = wallets.lock().unwrap();
+        if let Some(wallet) = wallets_guard.remove(&address) {
+            wallet.name.clone()
+        } else {
+            return Err((StatusCode::NOT_FOUND, Json(ErrorResponse {
+                error: "錢包不存在".to_string(),
+            })));
+        }
+    };
+    
+    // 更新配置文件
+    if let Err(e) = remove_from_config_file(&address).await {
+        warn!("⚠️ 更新配置文件失敗: {}", e);
+    }
+    
+    info!("✅ 成功刪除錢包: {} ({})", wallet_name, &address[..8]);
+    
+    Ok(Json(ApiResponse {
+        success: true,
+        message: format!("成功刪除錢包 {}", wallet_name),
+    }))
+}
+
 async fn websocket_handler(
     ws: WebSocketUpgrade,
     axum::extract::State(wallets): axum::extract::State<SharedWallets>,
@@ -618,6 +745,90 @@ fn handle_transaction_update(
     Ok(())
 }
 
+// 配置文件操作函數
+async fn update_config_file(address: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let config_content = fs::read_to_string("config.toml")?;
+    let mut lines: Vec<String> = config_content.lines().map(|s| s.to_string()).collect();
+    
+    // 添加新的錢包配置
+    lines.push(String::new());
+    lines.push("[[wallets]]".to_string());
+    lines.push(format!("address = \"{}\"", address));
+    lines.push(format!("name = \"{}\"", name));
+    
+    let updated_content = lines.join("\n");
+    fs::write("config.toml", updated_content)?;
+    
+    Ok(())
+}
+
+async fn remove_from_config_file(address: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let config_content = fs::read_to_string("config.toml")?;
+    let lines: Vec<&str> = config_content.lines().collect();
+    let mut new_lines: Vec<&str> = Vec::new();
+    let mut i = 0;
+    
+    while i < lines.len() {
+        let line = lines[i];
+        
+        // 檢查是否是錢包區塊的開始
+        if line.trim() == "[[wallets]]" {
+            // 查看下一行是否包含要刪除的地址
+            let mut wallet_lines = vec![line];
+            let mut j = i + 1;
+            let mut found_target = false;
+            
+            // 收集這個錢包區塊的所有行
+            while j < lines.len() {
+                let next_line = lines[j];
+                
+                // 如果遇到下一個區塊或文件結束，停止收集
+                if next_line.trim().starts_with("[") && next_line.trim() != "[[wallets]]" {
+                    break;
+                }
+                
+                // 如果遇到下一個錢包區塊，停止收集
+                if next_line.trim() == "[[wallets]]" {
+                    break;
+                }
+                
+                wallet_lines.push(next_line);
+                
+                // 檢查是否包含目標地址
+                if next_line.trim().starts_with("address = ") && next_line.contains(address) {
+                    found_target = true;
+                }
+                
+                j += 1;
+                
+                // 如果遇到空行且已經有了 name，這個錢包區塊結束
+                if next_line.trim().is_empty() && wallet_lines.iter().any(|l| l.trim().starts_with("name = ")) {
+                    break;
+                }
+            }
+            
+            // 如果不是目標錢包，保留這個區塊
+            if !found_target {
+                for wallet_line in wallet_lines {
+                    new_lines.push(wallet_line);
+                }
+            }
+            
+            // 跳過已處理的行
+            i = j;
+        } else {
+            // 保留非錢包區塊的行
+            new_lines.push(line);
+            i += 1;
+        }
+    }
+    
+    let updated_content = new_lines.join("\n");
+    fs::write("config.toml", updated_content)?;
+    
+    Ok(())
+}
+
 // 創建gRPC流
 async fn create_grpc_stream(
     grpc_endpoint: String,
@@ -745,8 +956,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 創建Web應用
     let app = Router::new()
         .route("/", get(serve_index))
-        .route("/api/wallets", get(get_wallets))
-        .route("/api/wallets/:address", get(get_wallet_detail))
+        .route("/api/wallets", get(get_wallets).post(add_wallet))
+        .route("/api/wallets/:address", get(get_wallet_detail).delete(delete_wallet))
         .route("/api/chart", get(get_chart_data))
         .route("/ws", get(websocket_handler))
         .layer(CorsLayer::permissive())
