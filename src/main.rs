@@ -53,7 +53,7 @@ struct BalanceHistory {
     total_balance: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct ChartDataPoint {
     time: i64, // Unix timestamp in seconds
     value: f64,
@@ -294,6 +294,51 @@ async fn get_chart_data(
     
     // 去除重複時間戳（保留最新的）
     chart_data.dedup_by_key(|point| point.time);
+    
+    // 根據時間範圍進行數據採樣，避免數據點過密
+    let target_points = match params.interval.as_str() {
+        "5M" => 30,     // 5分鐘目標30個點
+        "10M" => 40,    // 10分鐘目標40個點
+        "30M" => 60,    // 30分鐘目標60個點
+        "1H" => 80,     // 1小時目標80個點
+        "2H" => 100,    // 2小時目標100個點
+        "4H" => 120,    // 4小時目標120個點
+        "8H" => 150,    // 8小時目標150個點
+        "12H" => 180,   // 12小時目標180個點
+        "1D" => 200,    // 1天目標200個點
+        "1W" => 250,    // 1週目標250個點
+        "ALL" => 300,   // 全部目標300個點
+        _ => 80,
+    };
+    
+    // 只有當數據點過多時才進行採樣
+    if chart_data.len() > target_points && chart_data.len() > 2 {
+        let sampling_ratio = chart_data.len() as f64 / target_points as f64;
+        let mut sampled_data: Vec<ChartDataPoint> = Vec::new();
+        
+        // 總是包含第一個點
+        sampled_data.push(chart_data[0].clone());
+        
+        // 根據採樣比例選擇中間的點
+        for i in 1..chart_data.len()-1 {
+            let expected_index = i as f64 / sampling_ratio;
+            if (expected_index.floor() as usize) != ((i-1) as f64 / sampling_ratio).floor() as usize {
+                sampled_data.push(chart_data[i].clone());
+            }
+        }
+        
+        // 總是包含最後一個點
+        if chart_data.len() > 1 {
+            sampled_data.push(chart_data[chart_data.len()-1].clone());
+        }
+        
+        info!("📊 圖表數據採樣完成: 原始數據 {} 點 -> 採樣後 {} 點 (目標: {} 點)", 
+              chart_data.len(), sampled_data.len(), target_points);
+        
+        chart_data = sampled_data;
+    } else {
+        info!("📊 圖表數據無需採樣: {} 點 (目標: {} 點)", chart_data.len(), target_points);
+    }
     
     Ok(Json(chart_data))
 }
@@ -727,3 +772,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     Ok(())
 }
+
