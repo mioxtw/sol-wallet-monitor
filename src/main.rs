@@ -12,9 +12,13 @@ use {
     log::{error, info, warn},
     redb::{Database, TableDefinition, ReadableTable},
     serde::{Deserialize, Serialize},
+    solana_client::rpc_client::RpcClient,
+    solana_sdk::pubkey::Pubkey,
+    spl_associated_token_account::get_associated_token_address,
     std::{
         collections::{HashMap, VecDeque},
         fs,
+        str::FromStr,
         sync::{Arc, Mutex},
         time::Duration,
     },
@@ -113,6 +117,7 @@ struct ErrorResponse {
 #[derive(Debug, Deserialize)]
 struct Config {
     grpc: GrpcConfig,
+    rpc: RpcConfig,
     wallets: Vec<WalletConfig>,
     logging: LoggingConfig,
     server: ServerConfig,
@@ -120,6 +125,11 @@ struct Config {
 
 #[derive(Debug, Deserialize)]
 struct GrpcConfig {
+    endpoint: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RpcConfig {
     endpoint: String,
 }
 
@@ -550,8 +560,9 @@ async fn add_wallet(
     // 創建新錢包
     let new_wallet = WalletBalance::new(address.to_string(), name.to_string());
     
-    // 嘗試初始化錢包餘額
-    match query_wallet_balance(address).await {
+    // 嘗試初始化錢包餘額 (使用配置中的RPC端點)
+    let rpc_endpoint = "http://127.0.0.1:8899"; // 暫時硬編碼，應該從配置傳入
+    match query_wallet_balance(address, rpc_endpoint).await {
         Ok((sol_balance, wsol_balance)) => {
             let mut new_wallet = new_wallet;
             new_wallet.update_sol((sol_balance * 1_000_000_000.0) as u64);
@@ -684,64 +695,33 @@ fn setup_logging(level: &str) {
 }
 
 // 查詢錢包餘額 (初始化用)
-async fn query_wallet_balance(wallet_address: &str) -> Result<(f64, f64), Box<dyn std::error::Error + Send + Sync>> {
-    let rpc_url = "https://api.mainnet-beta.solana.com";
-    let client = reqwest::Client::new();
-
+async fn query_wallet_balance(wallet_address: &str, rpc_endpoint: &str) -> Result<(f64, f64), Box<dyn std::error::Error + Send + Sync>> {
+    // 使用 Solana RPC Client
+    let client = RpcClient::new(rpc_endpoint.to_string());
+    
+    // 解析錢包地址
+    let owner_pubkey = Pubkey::from_str(wallet_address)?;
+    
     // 查詢 SOL 餘額
-    let sol_request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getBalance",
-        "params": [wallet_address]
-    });
-
-    let sol_response = client
-        .post(rpc_url)
-        .json(&sol_request)
-        .send()
-        .await?;
-
-    let sol_json: serde_json::Value = sol_response.json().await?;
-    let sol_lamports = sol_json["result"]["value"].as_u64().unwrap_or(0);
+    let sol_lamports = client.get_balance(&owner_pubkey)?;
     let sol_balance = sol_lamports as f64 / 1_000_000_000.0;
-
-    // 查詢 WSOL 餘額
-    let wsol_request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getTokenAccountsByOwner",
-        "params": [
-            wallet_address,
-            { "mint": WSOL_MINT },
-            { "encoding": "jsonParsed" }
-        ]
-    });
-
-    let wsol_response = client
-        .post(rpc_url)
-        .json(&wsol_request)
-        .send()
-        .await?;
-
-    let wsol_json: serde_json::Value = wsol_response.json().await?;
-    let mut wsol_balance = 0.0;
-
-    if let Some(accounts) = wsol_json["result"]["value"].as_array() {
-        for account in accounts {
-            if let Some(amount) = account["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"].as_f64() {
-                wsol_balance += amount;
-            }
-        }
-    }
-
+    
+    // 查詢 WSOL 餘額 - 使用 ATA 方式
+    let wsol_mint = Pubkey::from_str(WSOL_MINT)?;
+    let ata = get_associated_token_address(&owner_pubkey, &wsol_mint);
+    
+    let wsol_balance = match client.get_token_account_balance(&ata) {
+        Ok(balance) => balance.ui_amount.unwrap_or(0.0),
+        Err(_) => 0.0, // ATA 不存在，餘額為 0
+    };
+    
     Ok((sol_balance, wsol_balance))
 }
 
 // 從RPC初始化所有錢包餘額
-async fn initialize_wallets_from_rpc(wallets: &mut HashMap<String, WalletBalance>, db: &Database) {
+async fn initialize_wallets_from_rpc(wallets: &mut HashMap<String, WalletBalance>, db: &Database, rpc_endpoint: &str) {
     let wallet_count = wallets.len();
-    info!("🔄 開始從RPC獲取 {} 個錢包的最新餘額，每個錢包間隔15秒確保API穩定性", wallet_count);
+    info!("🔄 開始從RPC獲取 {} 個錢包的最新餘額 (使用ATA查詢)", wallet_count);
     
     let mut processed_count = 0;
     
@@ -750,7 +730,7 @@ async fn initialize_wallets_from_rpc(wallets: &mut HashMap<String, WalletBalance
         info!("📋 正在獲取錢包 {}/{} 的最新餘額: {} ({})", processed_count, wallet_count, wallet.name, &address[..8]);
         
         // 從RPC獲取最新的SOL和WSOL餘額
-        match query_wallet_balance(address).await {
+        match query_wallet_balance(address, rpc_endpoint).await {
             Ok((sol_balance, wsol_balance)) => {
                 wallet.update_sol((sol_balance * 1_000_000_000.0) as u64);
                 wallet.initialize_wsol(wsol_balance);
@@ -758,18 +738,8 @@ async fn initialize_wallets_from_rpc(wallets: &mut HashMap<String, WalletBalance
             }
             Err(e) => {
                 error!("❌ 獲取錢包 {} 的SOL和WSOL餘額失敗: {}", wallet.name, e);
-                // 即使SOL查詢失敗，也要嘗試獲取WSOL餘額
-                match query_wsol_balance(address).await {
-                    Ok(wsol_balance) => {
-                        wallet.initialize_wsol(wsol_balance);
-                        info!("   📊 SOL查詢失敗，但成功獲取WSOL: {:.6}", wsol_balance);
-                    }
-                    Err(wsol_err) => {
-                        error!("❌ 獲取錢包 {} 的WSOL餘額也失敗: {}", wallet.name, wsol_err);
-                        // 設置為0以避免未初始化狀態
-                        wallet.initialize_wsol(0.0);
-                    }
-                }
+                // 設置為0以避免未初始化狀態
+                wallet.initialize_wsol(0.0);
             }
         }
         
@@ -786,52 +756,12 @@ async fn initialize_wallets_from_rpc(wallets: &mut HashMap<String, WalletBalance
                 warn!("⚠️ 保存最新餘額記錄失敗 {}: {}", wallet.name, e);
             }
         }
-        
-        // 等待15秒確保API穩定性
-        if processed_count < wallet_count {
-            info!("⏳ 等待15秒後處理下一個錢包...");
-            tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
-        }
     }
     
-    info!("✅ 所有錢包的最新餘額獲取完成！");
+    info!("✅ 所有錢包的最新餘額獲取完成！(無需等待間隔)");
 }
 
-// 查詢WSOL餘額
-async fn query_wsol_balance(wallet_address: &str) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
-    let rpc_url = "https://api.mainnet-beta.solana.com";
-    let client = reqwest::Client::new();
 
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getTokenAccountsByOwner",
-        "params": [
-            wallet_address,
-            { "mint": WSOL_MINT },
-            { "encoding": "jsonParsed" }
-        ]
-    });
-
-    let response = client
-        .post(rpc_url)
-        .json(&request)
-        .send()
-        .await?;
-
-    let json: serde_json::Value = response.json().await?;
-    let mut total_balance = 0.0;
-
-    if let Some(accounts) = json["result"]["value"].as_array() {
-        for account in accounts {
-            if let Some(amount) = account["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"].as_f64() {
-                total_balance += amount;
-            }
-        }
-    }
-
-    Ok(total_balance)
-}
 
 // 處理交易更新
 fn handle_transaction_update(
@@ -1159,7 +1089,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // 所有錢包都需要從RPC獲取最新的SOL和WSOL餘額，確保數據準確性
     info!("🔄 正在從RPC獲取所有錢包的最新餘額...");
-    initialize_wallets_from_rpc(&mut wallets_map, &database).await;
+    initialize_wallets_from_rpc(&mut wallets_map, &database, &config.rpc.endpoint).await;
     
     let shared_wallets = Arc::new(Mutex::new(wallets_map));
     
