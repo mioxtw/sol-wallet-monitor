@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOL 錢包監控器</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js" onerror="console.error('無法載入 LightweightCharts 從 unpkg')"></script>
+    <script>
+        // 備用 CDN 載入檢查
+        window.addEventListener('load', function() {
+            if (typeof LightweightCharts === 'undefined') {
+                console.log('嘗試從備用 CDN 載入 LightweightCharts...');
+                var script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js';
+                script.onerror = function() {
+                    console.error('無法從任何 CDN 載入 LightweightCharts');
+                };
+                document.head.appendChild(script);
+            }
+        });
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffffff;
+            min-height: 100vh;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 300px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-right: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            min-width: 0;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #f093fb 0%, #f5576c 50%, #4facfe 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.8;
+        }
+
+        .wallet-list h2 {
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+            color: #ffd700;
+        }
+
+        .wallet-item {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+
+        .wallet-item:hover {
+            background: rgba(255, 255, 255, 0.25);
+            transform: translateY(-2px);
+        }
+
+        .wallet-item.active {
+            border-color: #ffd700;
+            background: rgba(255, 215, 0, 0.15);
+        }
+
+        .wallet-name {
+            font-size: 1.1rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .wallet-address {
+            font-size: 0.85rem;
+            opacity: 0.7;
+            margin-bottom: 10px;
+            font-family: monospace;
+        }
+
+        .wallet-balance {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #4ade80;
+        }
+
+        .balance-section {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        .balance-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .balance-card {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            transition: transform 0.3s ease;
+        }
+
+        .balance-card:hover {
+            transform: translateY(-3px);
+        }
+
+        .balance-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            margin-bottom: 8px;
+        }
+
+        .balance-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #4ade80;
+        }
+
+        .sol-balance {
+            color: #ff6b6b;
+        }
+
+        .wsol-balance {
+            color: #4ecdc4;
+        }
+
+        .total-balance {
+            color: #ffd700;
+        }
+
+        .chart-section {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        .chart-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .control-group label {
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .control-button {
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            padding: 8px 12px;
+            color: white;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+
+        .control-button:hover {
+            background: rgba(255, 255, 255, 0.25);
+            transform: translateY(-1px);
+        }
+
+        .control-button.active {
+            background: rgba(255, 215, 0, 0.3);
+            border-color: #ffd700;
+            color: #ffd700;
+        }
+
+        .controls-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        select {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            padding: 8px 12px;
+            color: white;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+
+        select option {
+            background: #2a5298;
+            color: white;
+        }
+
+        .chart-container {
+            height: calc(100vh - 280px);
+            min-height: 500px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            position: relative;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.1rem;
+            opacity: 0.7;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-connected {
+            background: #4ade80;
+            animation: pulse 2s infinite;
+        }
+
+        .status-disconnected {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .connection-status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+            
+            .sidebar {
+                width: 100%;
+                height: auto;
+                max-height: 40vh;
+            }
+            
+            .balance-cards {
+                grid-template-columns: 1fr;
+            }
+            
+            .chart-controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 50px 20px;
+            opacity: 0.7;
+        }
+
+        .wallet-update-time {
+            font-size: 0.75rem;
+            opacity: 0.6;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status" id="connectionStatus">
+        <div class="status-indicator status-disconnected" id="statusIndicator"></div>
+        <span id="statusText">連接中...</span>
+    </div>
+
+    <div class="container">
+        <div class="sidebar">
+
+            
+            <div class="wallet-list">
+                <h2>錢包列表</h2>
+                <div id="walletList"></div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="balance-section" id="balanceSection" style="display: none;">
+                <div class="balance-cards">
+                    <div class="balance-card">
+                        <div class="balance-label">SOL 餘額</div>
+                        <div class="balance-value sol-balance" id="solBalance">0.000000</div>
+                    </div>
+                    <div class="balance-card">
+                        <div class="balance-label">WSOL 餘額</div>
+                        <div class="balance-value wsol-balance" id="wsolBalance">0.000000</div>
+                    </div>
+                    <div class="balance-card">
+                        <div class="balance-label">總計(SOL+WSOL)</div>
+                        <div class="balance-value total-balance" id="totalBalance">0.000000</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chart-section">
+                <div class="controls-row">
+                    <div class="control-group">
+                        <label>數據類型 (可多選):</label>
+                        <div class="button-group" id="dataTypeButtons">
+                            <button class="control-button active" data-type="total">總計(SOL+WSOL)</button>
+                            <button class="control-button" data-type="sol">SOL</button>
+                            <button class="control-button" data-type="wsol">WSOL</button>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label>時間範圍:</label>
+                        <div class="button-group" id="timeIntervalButtons">
+                            <button class="control-button" data-interval="5M">5分鐘</button>
+                            <button class="control-button" data-interval="10M">10分鐘</button>
+                            <button class="control-button" data-interval="30M">30分鐘</button>
+                            <button class="control-button active" data-interval="1H">1小時</button>
+                            <button class="control-button" data-interval="2H">2小時</button>
+                            <button class="control-button" data-interval="4H">4小時</button>
+                            <button class="control-button" data-interval="8H">8小時</button>
+                            <button class="control-button" data-interval="12H">12小時</button>
+                            <button class="control-button" data-interval="1D">1天</button>
+                            <button class="control-button" data-interval="1W">1週</button>
+                            <button class="control-button" data-interval="ALL">全部</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-container" id="chartContainer">
+                    <div class="loading" id="loadingText">請選擇一個錢包查看圖表</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class WalletMonitor {
+            constructor() {
+                this.wallets = [];
+                this.selectedWallet = null;
+                this.chart = null;
+                this.lineSeries = {}; // 改為物件來儲存多條線
+                this.ws = null;
+                this.isConnected = false;
+                
+                this.initializeElements();
+                this.setupEventListeners();
+                this.initializeChart();
+                this.connectWebSocket();
+                // loadWallets 將在 DOM 完全載入後調用
+            }
+
+            initializeElements() {
+                this.walletListEl = document.getElementById('walletList');
+                this.balanceSectionEl = document.getElementById('balanceSection');
+                this.solBalanceEl = document.getElementById('solBalance');
+                this.wsolBalanceEl = document.getElementById('wsolBalance');
+                this.totalBalanceEl = document.getElementById('totalBalance');
+                this.chartContainerEl = document.getElementById('chartContainer');
+                this.loadingTextEl = document.getElementById('loadingText');
+                this.dataTypeButtonsEl = document.getElementById('dataTypeButtons');
+                this.timeIntervalButtonsEl = document.getElementById('timeIntervalButtons');
+                this.statusIndicatorEl = document.getElementById('statusIndicator');
+                this.statusTextEl = document.getElementById('statusText');
+                
+                // 設置預設值 - 預設顯示總計(SOL+WSOL)
+                this.activeDataTypes = new Set(['total']);
+                this.currentTimeInterval = '1H';
+            }
+
+            setupEventListeners() {
+                // 數據類型按鈕事件 - 支援多選
+                this.dataTypeButtonsEl.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('control-button')) {
+                        const dataType = e.target.dataset.type;
+                        
+                        if (this.activeDataTypes.has(dataType)) {
+                            // 如果已選中，則取消選中
+                            this.activeDataTypes.delete(dataType);
+                            e.target.classList.remove('active');
+                        } else {
+                            // 如果未選中，則添加選中
+                            this.activeDataTypes.add(dataType);
+                            e.target.classList.add('active');
+                        }
+                        
+                        this.updateChart();
+                    }
+                });
+                
+                // 時間間隔按鈕事件
+                this.timeIntervalButtonsEl.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('control-button')) {
+                        // 移除所有active類
+                        this.timeIntervalButtonsEl.querySelectorAll('.control-button').forEach(btn => 
+                            btn.classList.remove('active'));
+                        // 添加active到點擊的按鈕
+                        e.target.classList.add('active');
+                        this.currentTimeInterval = e.target.dataset.interval;
+                        this.updateChart();
+                    }
+                });
+            }
+
+            initializeChart() {
+                console.log('初始化圖表...');
+                console.log('LightweightCharts:', typeof LightweightCharts);
+                
+                if (typeof LightweightCharts === 'undefined') {
+                    console.error('LightweightCharts 庫未載入!');
+                    this.loadingTextEl.textContent = 'LightweightCharts 庫載入失敗';
+                    return;
+                }
+                
+                try {
+                    this.chart = LightweightCharts.createChart(this.chartContainerEl, {
+                        width: this.chartContainerEl.clientWidth,
+                        height: this.chartContainerEl.clientHeight,
+                        layout: {
+                            background: { color: 'transparent' },
+                            textColor: '#ffffff',
+                        },
+                        grid: {
+                            vertLines: { color: 'rgba(255, 255, 255, 0.1)' },
+                            horzLines: { color: 'rgba(255, 255, 255, 0.1)' },
+                        },
+                        crosshair: {
+                            mode: LightweightCharts.CrosshairMode.Normal,
+                        },
+                        rightPriceScale: {
+                            borderColor: 'rgba(255, 255, 255, 0.3)',
+                            autoScale: true,
+                            scaleMargins: {
+                                top: 0.05,
+                                bottom: 0.05,
+                            },
+                        },
+                        timeScale: {
+                            borderColor: 'rgba(255, 255, 255, 0.3)',
+                            timeVisible: true,
+                            secondsVisible: false,
+                            fixLeftEdge: true,
+                            fixRightEdge: true,
+                        },
+                        localization: {
+                            locale: 'zh-TW',
+                            timeFormatter: (timestamp) => {
+                                // timestamp 是 Unix 時間戳（秒）  
+                                const date = new Date(timestamp * 1000);
+                                // 加上台北時間偏移 (UTC+8)
+                                const taipeiOffset = 8 * 60 * 60 * 1000; // 8小時轉毫秒
+                                const taipeiTime = new Date(date.getTime() + taipeiOffset);
+                                
+                                const month = String(taipeiTime.getUTCMonth() + 1).padStart(2, '0');
+                                const day = String(taipeiTime.getUTCDate()).padStart(2, '0');
+                                const hours = String(taipeiTime.getUTCHours()).padStart(2, '0');
+                                const minutes = String(taipeiTime.getUTCMinutes()).padStart(2, '0');
+                                return `${month}/${day} ${hours}:${minutes}`;
+                            },
+                        },
+                    });
+                } catch (error) {
+                    console.error('創建圖表失敗:', error);
+                    this.loadingTextEl.textContent = '圖表初始化失敗';
+                    return;
+                }
+
+                // 初始化多條線系列
+                const colors = {
+                    sol: '#ff6b6b',
+                    wsol: '#4ecdc4', 
+                    total: '#ffd700'
+                };
+                
+                const names = {
+                    sol: 'SOL',
+                    wsol: 'WSOL',
+                    total: '總計(SOL+WSOL)'
+                };
+                
+                ['sol', 'wsol', 'total'].forEach(type => {
+                    this.lineSeries[type] = this.chart.addLineSeries({
+                        color: colors[type],
+                        lineWidth: 2,
+                        title: names[type],
+                        visible: this.activeDataTypes.has(type),
+                        priceFormat: {
+                            type: 'price',
+                            precision: 6,
+                            minMove: 0.000001,
+                        },
+                    });
+                    
+                    // 初始化空數據
+                    this.lineSeries[type].setData([]);
+                });
+
+                // 響應式設計
+                window.addEventListener('resize', () => {
+                    this.chart.applyOptions({
+                        width: this.chartContainerEl.clientWidth,
+                        height: this.chartContainerEl.clientHeight,
+                    });
+                });
+            }
+
+            async loadWallets() {
+                try {
+                    console.log('正在載入錢包列表...');
+                    console.log('當前URL:', window.location.href);
+                    const apiUrl = '/api/wallets';
+                    console.log('請求URL:', apiUrl);
+                    
+                    const response = await fetch(apiUrl);
+                    console.log('API響應狀態:', response.status);
+                    console.log('響應頭:', [...response.headers.entries()]);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.wallets = data;
+                        console.log('獲取到錢包數據:', this.wallets);
+                        console.log('錢包數量:', this.wallets ? this.wallets.length : 0);
+                        this.renderWalletList();
+                        
+                        // 自動選擇第一個錢包
+                        if (this.wallets.length > 0 && !this.selectedWallet) {
+                            console.log('自動選擇第一個錢包:', this.wallets[0]);
+                            setTimeout(() => {
+                                this.selectWallet(this.wallets[0]);
+                            }, 500);
+                        }
+                    } else {
+                        console.error('API響應錯誤:', response.status, response.statusText);
+                        const errorText = await response.text();
+                        console.error('錯誤詳情:', errorText);
+                    }
+                } catch (error) {
+                    console.error('載入錢包列表失敗:', error);
+                    console.error('錯誤堆疊:', error.stack);
+                }
+            }
+
+            renderWalletList() {
+                console.log('開始渲染錢包列表，錢包數量:', this.wallets ? this.wallets.length : 0);
+                console.log('錢包列表元素:', this.walletListEl);
+                
+                if (!this.walletListEl) {
+                    console.error('錢包列表元素未找到!');
+                    return;
+                }
+                
+                this.walletListEl.innerHTML = '';
+                
+                if (!this.wallets || this.wallets.length === 0) {
+                    console.log('沒有錢包數據');
+                    this.walletListEl.innerHTML = '<div class="no-data">沒有找到錢包</div>';
+                    return;
+                }
+                
+                this.wallets.forEach((wallet, index) => {
+                    console.log(`渲染錢包 ${index}:`, wallet);
+                    const walletEl = document.createElement('div');
+                    walletEl.className = 'wallet-item';
+                    if (this.selectedWallet && this.selectedWallet.address === wallet.address) {
+                        walletEl.classList.add('active');
+                    }
+                    
+                    const updateTime = new Date(wallet.last_update).toLocaleString('zh-TW');
+                    
+                    walletEl.innerHTML = `
+                        <div class="wallet-name">${wallet.name}</div>
+                        <div class="wallet-address">${wallet.address.substring(0, 8)}...${wallet.address.substring(wallet.address.length-8)}</div>
+                        <div class="wallet-balance">${wallet.total_balance.toFixed(6)} SOL</div>
+                        <div class="wallet-update-time">更新時間: ${updateTime}</div>
+                    `;
+                    
+                    walletEl.addEventListener('click', () => this.selectWallet(wallet));
+                    this.walletListEl.appendChild(walletEl);
+                });
+            }
+
+            selectWallet(wallet) {
+                console.log('選擇錢包:', wallet);
+                this.selectedWallet = wallet;
+                this.renderWalletList();
+                this.updateBalanceDisplay();
+                this.balanceSectionEl.style.display = 'block';
+                
+                // 延遲更新圖表，確保UI渲染完成
+                setTimeout(() => {
+                    this.loadingTextEl.style.display = 'none';
+                    this.updateChart();
+                }, 100);
+            }
+
+            updateBalanceDisplay() {
+                if (!this.selectedWallet) return;
+                
+                this.solBalanceEl.textContent = this.selectedWallet.sol_balance.toFixed(6);
+                this.wsolBalanceEl.textContent = this.selectedWallet.wsol_balance.toFixed(6);
+                this.totalBalanceEl.textContent = this.selectedWallet.total_balance.toFixed(6);
+            }
+
+            async updateChart() {
+                if (!this.selectedWallet) return;
+
+                try {
+                    const interval = this.currentTimeInterval;
+                    
+                    console.log('更新圖表...', { wallet: this.selectedWallet.address, activeTypes: [...this.activeDataTypes], interval });
+                    
+                    // 為每個選中的數據類型獲取數據
+                    for (const dataType of ['sol', 'wsol', 'total']) {
+                        if (this.activeDataTypes.has(dataType)) {
+                            // 顯示線條
+                            this.lineSeries[dataType].applyOptions({ visible: true });
+                            
+                            const response = await fetch(
+                                `/api/chart?wallet=${encodeURIComponent(this.selectedWallet.address)}&data_type=${dataType}&interval=${interval}`
+                            );
+                            
+                            if (response.ok) {
+                                const rawData = await response.json();
+                                console.log(`${dataType} 原始圖表數據:`, rawData);
+                                
+                                // 過濾和驗證數據
+                                const chartData = rawData
+                                    .filter(point => {
+                                        return point && 
+                                               typeof point.time === 'number' && 
+                                               typeof point.value === 'number' &&
+                                               !isNaN(point.value) &&
+                                               isFinite(point.value) &&
+                                               point.value !== null &&
+                                               point.value !== undefined;
+                                    })
+                                    .map(point => ({
+                                        time: point.time,
+                                        value: parseFloat(point.value.toFixed(6))
+                                    }))
+                                    .sort((a, b) => a.time - b.time); // 確保時間排序
+                                
+                                console.log(`${dataType} 處理後的圖表數據:`, chartData);
+                                
+                                this.lineSeries[dataType].setData(chartData);
+                            } else {
+                                console.error(`${dataType} 圖表API響應錯誤:`, response.status);
+                                this.lineSeries[dataType].setData([]);
+                            }
+                        } else {
+                            // 隱藏線條
+                            this.lineSeries[dataType].applyOptions({ visible: false });
+                        }
+                    }
+                    
+                    // 自動縮放到數據範圍
+                    this.chart.timeScale().fitContent();
+                    
+                } catch (error) {
+                    console.error('更新圖表失敗:', error);
+                }
+            }
+
+            connectWebSocket() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws`;
+                
+                this.ws = new WebSocket(wsUrl);
+                
+                this.ws.onopen = () => {
+                    this.isConnected = true;
+                    this.updateConnectionStatus();
+                    console.log('WebSocket 連接已建立');
+                };
+                
+                this.ws.onmessage = (event) => {
+                    try {
+                        const wallets = JSON.parse(event.data);
+                        console.log('收到 WebSocket 數據:', wallets);
+                        this.wallets = wallets;
+                        this.renderWalletList();
+                        
+                        // 更新選中錢包的餘額顯示和圖表
+                        if (this.selectedWallet) {
+                            const updatedWallet = wallets.find(w => w.address === this.selectedWallet.address);
+                            if (updatedWallet) {
+                                const oldBalance = this.selectedWallet.total_balance;
+                                this.selectedWallet = updatedWallet;
+                                this.updateBalanceDisplay();
+                                
+                                // 如果餘額發生變化，更新圖表
+                                if (Math.abs(updatedWallet.total_balance - oldBalance) > 0.000001) {
+                                    console.log('餘額發生變化，更新圖表');
+                                    this.updateChart();
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.error('解析 WebSocket 訊息失敗:', error);
+                    }
+                };
+                
+                this.ws.onclose = () => {
+                    this.isConnected = false;
+                    this.updateConnectionStatus();
+                    console.log('WebSocket 連接已關閉，嘗試重新連接...');
+                    
+                    // 5秒後重新連接
+                    setTimeout(() => this.connectWebSocket(), 5000);
+                };
+                
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket 錯誤:', error);
+                };
+            }
+
+            updateConnectionStatus() {
+                if (this.isConnected) {
+                    this.statusIndicatorEl.className = 'status-indicator status-connected';
+                    this.statusTextEl.textContent = '已連接';
+                } else {
+                    this.statusIndicatorEl.className = 'status-indicator status-disconnected';
+                    this.statusTextEl.textContent = '連接中斷';
+                }
+            }
+        }
+
+        // 初始化應用
+        function initializeApp() {
+            console.log('初始化錢包監控器...');
+            
+            if (typeof LightweightCharts === 'undefined') {
+                console.log('等待 LightweightCharts 載入...');
+                setTimeout(initializeApp, 100);
+                return;
+            }
+            
+            const monitor = new WalletMonitor();
+            
+            // 立即載入錢包數據
+            console.log('開始載入錢包數據...');
+            monitor.loadWallets();
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('DOM 載入完成');
+            initializeApp();
+        });
+    </script>
+</body>
+</html> 

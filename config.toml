@@ -4,14 +4,31 @@
 [grpc]
 endpoint = "http://127.0.0.1:10000"
 
+# Web 服務器配置
+[server]
+host = "0.0.0.0"
+port = 3000
+
 # 監控的錢包列表
 [[wallets]]
-address = "7dGrdJRYtsNR8UYxZ3TnifXGjGc9eRYLq9sELwYpuuUu"
-name = "主要錢包"
+address = "As516ZAsiAzTQuR5JTP5oEucPb3irbQf4tBxKx3MDMpa"
+name = "As51"
 
 [[wallets]]
-address = "As516ZAsiAzTQuR5JTP5oEucPb3irbQf4tBxKx3MDMpa"
-name = "測試錢包"
+address = "7dGrdJRYtsNR8UYxZ3TnifXGjGc9eRYLq9sELwYpuuUu"
+name = "7dG"
+
+[[wallets]]
+address = "goopNoaJhhrzxi6oq2j4chcyHKGucAeVZSk4QBA7Gu1"
+name = "goo"
+
+[[wallets]]
+address = "HodL7w84ZMX29GEmNVZMno2oFQzNWuXG5ovQKsP8WFNd"
+name = "HodL"
+
+[[wallets]]
+address = "8MgCrWgTYD14ySiYU5iEotwiNSrFcLhykyVwJhFmy5kH"
+name = "8Mg"
 
 # 可以添加更多錢包
 # [[wallets]]
