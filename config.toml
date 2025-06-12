@@ -20,9 +20,21 @@ port = 3000
 level = "info" 
 
 [[wallets]]
+address = "As516ZAsiAzTQuR5JTP5oEucPb3irbQf4tBxKx3MDMpa"
+name = "As51"
+
+[[wallets]]
+address = "8MgCrWgTYD14ySiYU5iEotwiNSrFcLhykyVwJhFmy5kH"
+name = "8Mg"
+
+[[wallets]]
+address = "HodL7w84ZMX29GEmNVZMno2oFQzNWuXG5ovQKsP8WFNd"
+name = "HodL"
+
+[[wallets]]
 address = "7dGrdJRYtsNR8UYxZ3TnifXGjGc9eRYLq9sELwYpuuUu"
 name = "7dG"
 
 [[wallets]]
-address = "As516ZAsiAzTQuR5JTP5oEucPb3irbQf4tBxKx3MDMpa"
-name = "As51"
+address = "goopNoaJhhrzxi6oq2j4chcyHKGucAeVZSk4QBA7Gu1"
+name = "goo"

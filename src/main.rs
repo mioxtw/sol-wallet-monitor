@@ -37,7 +37,7 @@ use {
 
 // 常數定義
 const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
-const MAX_HISTORY_SIZE: usize = 10000;
+const MAX_HISTORY_SIZE: usize = 100000;
 const DB_FILE: &str = "wallet_history.redb";
 
 // 資料庫表格定義
@@ -435,13 +435,29 @@ async fn get_chart_data(
     let wallets_guard = state.wallets.lock().unwrap();
     let wallet = wallets_guard.get(&params.wallet).ok_or(StatusCode::NOT_FOUND)?;
     
-    // 獲取所有歷史數據，讓前端 Lightweight Charts 處理時間範圍
+    // 獲取所有歷史數據
     let mut history: Vec<_> = wallet.history.iter().collect();
     
     // 排序歷史數據以確保時間順序
     history.sort_by_key(|h| h.timestamp);
     
-    let mut chart_data: Vec<ChartDataPoint> = history
+    // 根據時間範圍過濾數據
+    let now = Utc::now();
+    let filtered_history: Vec<_> = match params.interval.as_str() {
+        "5M" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_minutes() <= 5).collect(),
+        "10M" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_minutes() <= 10).collect(),
+        "30M" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_minutes() <= 30).collect(),
+        "1H" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_hours() <= 1).collect(),
+        "2H" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_hours() <= 2).collect(),
+        "4H" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_hours() <= 4).collect(),
+        "8H" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_hours() <= 8).collect(),
+        "12H" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_hours() <= 12).collect(),
+        "1D" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_days() <= 1).collect(),
+        "1W" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_weeks() <= 1).collect(),
+        "ALL" | _ => history,
+    };
+    
+    let mut chart_data: Vec<ChartDataPoint> = filtered_history
         .iter()
         .filter_map(|h| {
             let value = match params.data_type.as_str() {
@@ -466,10 +482,50 @@ async fn get_chart_data(
     // 去除重複時間戳（保留最新的）
     chart_data.dedup_by_key(|point| point.time);
     
-    // 移除採樣邏輯，返回完整數據
-    info!("📊 圖表數據準備完成: {} 點", chart_data.len());
+        // 基於時間的均勻採樣到 1000 筆數據
+    let sampled_data = if chart_data.len() > 1000 {
+        if chart_data.is_empty() {
+            chart_data
+        } else {
+            let start_time = chart_data.first().unwrap().time;
+            let end_time = chart_data.last().unwrap().time;
+            let time_span = end_time - start_time;
+            
+            if time_span <= 0 {
+                // 如果時間跨度為0，直接返回原數據
+                chart_data
+            } else {
+                let mut sampled = Vec::new();
+                let sample_interval = time_span as f64 / 999.0; // 999個間隔產生1000個點
+                
+                for i in 0..1000 {
+                    let target_time = start_time + (i as f64 * sample_interval) as i64;
+                    
+                    // 找到最接近目標時間的數據點
+                    let closest_point = chart_data.iter()
+                        .min_by_key(|point| (point.time - target_time).abs())
+                        .unwrap();
+                    
+                    sampled.push(closest_point.clone());
+                }
+                
+                // 去除重複的時間點，保持時間順序
+                sampled.sort_by_key(|point| point.time);
+                sampled.dedup_by_key(|point| point.time);
+                
+                info!("📊 圖表數據時間採樣: 原始 {} 點 -> 採樣 {} 點 (時間跨度: {}秒)", 
+                      chart_data.len(), sampled.len(), time_span);
+                sampled
+            }
+        }
+    } else {
+        info!("📊 圖表數據無需採樣: {} 點 (上限: 1000 點)", chart_data.len());
+        chart_data
+    };
+
+    info!("📊 圖表數據準備完成: {} 點 (時間範圍: {})", sampled_data.len(), params.interval);
     
-    Ok(Json(chart_data))
+    Ok(Json(sampled_data))
 }
 
 async fn add_wallet(
@@ -619,46 +675,94 @@ async fn websocket_handler(
 
 async fn websocket_connection(mut socket: WebSocket, wallets: SharedWallets) {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
-    let mut last_sent_summaries: Option<Vec<WalletSummary>> = None;
+    let mut last_sent_data: Option<HashMap<String, (f64, f64, f64, DateTime<Utc>)>> = None; // address -> (sol, wsol, total, timestamp)
     
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let current_summaries: Vec<WalletSummary> = {
+                let current_data: HashMap<String, (f64, f64, f64, DateTime<Utc>)> = {
                     let wallets_guard = wallets.lock().unwrap();
-                    wallets_guard.values().map(|w| {
-                        let summary = w.to_summary();
-                        if w.history.len() > 100 {
-                            info!("📊 WebSocket 採樣: 錢包 {} 歷史數據 {} 點 -> {} 點", 
-                                  &w.name, w.history.len(), summary.sampled_history.len());
-                        }
-                        summary
+                    wallets_guard.iter().map(|(addr, wallet)| {
+                        (addr.clone(), (wallet.sol_balance, wallet.wsol_balance, wallet.total_balance(), wallet.last_update))
                     }).collect()
                 };
                 
-                // 只有當資料有變化時才發送（即時更新只發送最新的）
-                let should_send = match &last_sent_summaries {
-                    None => true, // 第一次發送
-                    Some(last) => {
-                        // 檢查是否有任何錢包的餘額或最後更新時間發生變化
-                        current_summaries.iter().zip(last.iter()).any(|(current, last)| {
-                            (current.sol_balance - last.sol_balance).abs() > 0.000001 ||
-                            (current.wsol_balance - last.wsol_balance).abs() > 0.000001 ||
-                            current.last_update != last.last_update
-                        }) || current_summaries.len() != last.len()
-                    }
-                };
+                // 檢查變化並收集更新的錢包
+                let mut updates = Vec::new();
                 
-                if should_send {
-                    info!("📡 WebSocket 發送更新: {} 個錢包", current_summaries.len());
-                    if let Err(_) = socket.send(axum::extract::ws::Message::Text(
-                        serde_json::to_string(&current_summaries).unwrap_or_default()
-                    )).await {
+                for (address, (sol, wsol, total, timestamp)) in &current_data {
+                    let has_change = match &last_sent_data {
+                        None => true, // 第一次發送
+                        Some(last_data) => {
+                            match last_data.get(address) {
+                                None => true, // 新錢包
+                                Some((last_sol, last_wsol, last_total, last_timestamp)) => {
+                                    // 檢查餘額或時間戳是否有變化
+                                    (sol - last_sol).abs() > f64::EPSILON ||
+                                    (wsol - last_wsol).abs() > f64::EPSILON ||
+                                    (total - last_total).abs() > f64::EPSILON ||
+                                    timestamp != last_timestamp
+                                }
+                            }
+                        }
+                    };
+                    
+                    if has_change {
+                        // 獲取錢包詳細信息
+                        let wallets_guard = wallets.lock().unwrap();
+                        if let Some(wallet) = wallets_guard.get(address) {
+                            // 只發送最新的一筆歷史數據
+                            let latest_history = wallet.history.back().cloned();
+                            
+                            let update = serde_json::json!({
+                                "type": "update",
+                                "wallet": {
+                                    "address": wallet.address,
+                                    "name": wallet.name,
+                                    "sol_balance": wallet.sol_balance,
+                                    "wsol_balance": if wallet.wsol_initialized { wallet.wsol_balance } else { 0.0 },
+                                    "total_balance": wallet.total_balance(),
+                                    "last_update": wallet.last_update,
+                                    "latest_data": latest_history.map(|h| serde_json::json!({
+                                        "time": h.timestamp.timestamp(),
+                                        "sol_balance": h.sol_balance,
+                                        "wsol_balance": h.wsol_balance,
+                                        "total_balance": h.total_balance
+                                    }))
+                                }
+                            });
+                            updates.push(update);
+                        }
+                    }
+                }
+                
+                // 檢查是否有錢包被刪除
+                if let Some(ref last_data) = last_sent_data {
+                    for address in last_data.keys() {
+                        if !current_data.contains_key(address) {
+                            let delete_update = serde_json::json!({
+                                "type": "delete",
+                                "address": address
+                            });
+                            updates.push(delete_update);
+                        }
+                    }
+                }
+                
+                // 發送更新
+                if !updates.is_empty() {
+                    let message = serde_json::json!({
+                        "type": "batch_update",
+                        "updates": updates
+                    });
+                    
+                    if socket.send(axum::extract::ws::Message::Text(message.to_string())).await.is_err() {
                         break;
                     }
-                    last_sent_summaries = Some(current_summaries);
+                    
+                    info!("📡 WebSocket 發送 {} 個錢包更新 (只含最新數據)", updates.len());
+                    last_sent_data = Some(current_data);
                 } else {
-                    // 沒有變化，不發送
                     debug!("📡 WebSocket 無變化，跳過發送");
                 }
             }

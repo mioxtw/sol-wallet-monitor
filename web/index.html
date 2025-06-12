@@ -1136,21 +1136,25 @@
                 
                 this.ws.onmessage = (event) => {
                     try {
-                        const wallets = JSON.parse(event.data);
-                        console.log('收到 WebSocket 數據:', wallets);
-                        this.wallets = wallets;
-                        this.renderWalletList();
+                        const message = JSON.parse(event.data);
+                        console.log('收到 WebSocket 數據:', message);
                         
-                        // 更新選中錢包的餘額顯示
-                        if (this.selectedWallet) {
-                            const updatedWallet = wallets.find(w => w.address === this.selectedWallet.address);
-                            if (updatedWallet) {
-                                this.selectedWallet = updatedWallet;
-                                this.updateBalanceDisplay();
-                                
-                                // 由後端 WebSocket 控制
-                                console.log('收到 WebSocket 更新，更新圖表');
-                                this.updateChart();
+                        // 處理新的批量更新格式
+                        if (message.type === 'batch_update' && message.updates) {
+                            this.handleBatchUpdate(message.updates);
+                        } else if (Array.isArray(message)) {
+                            // 兼容舊格式（完整錢包列表）
+                            this.wallets = message;
+                            this.renderWalletList();
+                            
+                            // 更新選中錢包的餘額顯示
+                            if (this.selectedWallet) {
+                                const updatedWallet = message.find(w => w.address === this.selectedWallet.address);
+                                if (updatedWallet) {
+                                    this.selectedWallet = updatedWallet;
+                                    this.updateBalanceDisplay();
+                                    this.updateChart();
+                                }
                             }
                         }
                     } catch (error) {
@@ -1170,6 +1174,86 @@
                 this.ws.onerror = (error) => {
                     console.error('WebSocket 錯誤:', error);
                 };
+            }
+
+            handleBatchUpdate(updates) {
+                let hasSelectedWalletUpdate = false;
+                
+                for (const update of updates) {
+                    if (update.type === 'update' && update.wallet) {
+                        const wallet = update.wallet;
+                        
+                        // 更新或添加錢包到列表
+                        const existingIndex = this.wallets.findIndex(w => w.address === wallet.address);
+                        if (existingIndex >= 0) {
+                            this.wallets[existingIndex] = wallet;
+                        } else {
+                            this.wallets.push(wallet);
+                        }
+                        
+                        // 如果有最新數據點，添加到圖表
+                        if (wallet.latest_data && this.selectedWallet && this.selectedWallet.address === wallet.address) {
+                            this.addDataPointToChart(wallet.latest_data);
+                            hasSelectedWalletUpdate = true;
+                        }
+                        
+                        // 更新選中錢包
+                        if (this.selectedWallet && this.selectedWallet.address === wallet.address) {
+                            this.selectedWallet = wallet;
+                            this.updateBalanceDisplay();
+                        }
+                    } else if (update.type === 'delete') {
+                        // 刪除錢包
+                        this.wallets = this.wallets.filter(w => w.address !== update.address);
+                        
+                        // 如果刪除的是當前選中的錢包，清除選擇
+                        if (this.selectedWallet && this.selectedWallet.address === update.address) {
+                            this.selectedWallet = null;
+                            this.balanceSectionEl.style.display = 'none';
+                            this.chart.setData([]);
+                        }
+                    }
+                }
+                
+                // 重新渲染錢包列表
+                this.renderWalletList();
+                
+                console.log(`處理了 ${updates.length} 個更新，選中錢包${hasSelectedWalletUpdate ? '有' : '無'}更新`);
+            }
+
+            addDataPointToChart(dataPoint) {
+                if (!this.chart || !dataPoint || !this.lineSeries) return;
+                
+                try {
+                    // 為每個活躍的數據類型添加數據點
+                    this.activeDataTypes.forEach(type => {
+                        if (this.lineSeries[type]) {
+                            let value;
+                            switch (type) {
+                                case 'sol':
+                                    value = dataPoint.sol_balance;
+                                    break;
+                                case 'wsol':
+                                    value = dataPoint.wsol_balance;
+                                    break;
+                                case 'total':
+                                default:
+                                    value = dataPoint.total_balance;
+                                    break;
+                            }
+                            
+                            // 使用正確的 lineSeries.update() 方法
+                            this.lineSeries[type].update({
+                                time: dataPoint.time,
+                                value: value
+                            });
+                            
+                            console.log(`添加新數據點到 ${type} 線系列:`, { time: dataPoint.time, value: value });
+                        }
+                    });
+                } catch (error) {
+                    console.error('添加數據點到圖表失敗:', error);
+                }
             }
 
             updateConnectionStatus() {
