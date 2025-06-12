@@ -952,8 +952,8 @@
                     
                     walletEl.innerHTML = `
                         <button class="delete-wallet-btn" title="刪除錢包">&times;</button>
-                        <div class="wallet-name">${wallet.name}</div>
                         <div class="wallet-address clickable-address" data-address="${wallet.address}" title="點擊複製完整地址">${wallet.address.substring(0, 8)}...${wallet.address.substring(wallet.address.length-8)}</div>
+                        <div class="wallet-name">${wallet.name}</div>
                         <div class="wallet-balance">${wallet.total_balance.toFixed(6)} SOL</div>
                         <div class="wallet-update-time">更新時間: ${updateTime}</div>
                     `;
