@@ -798,22 +798,48 @@
                             secondsVisible: false,
                             fixLeftEdge: true,
                             fixRightEdge: true,
+                            barSpacing: 2,       // 適中的點間距，平衡顯示密度和可讀性
+                            minBarSpacing: 0.5,  // 最小允許的bar spacing，允許密集顯示
+                            rightOffset: 12,     // 右邊留白，確保最新數據點可見
+                            visible: true,       // 確保時間軸可見
+                            shiftVisibleRangeOnNewBar: true,  // 新數據時自動調整可見範圍
                         },
                         localization: {
                             locale: 'zh-TW',
-                            timeFormatter: (timestamp) => {
-                                // timestamp 是 Unix 時間戳（秒）  
-                                const date = new Date(timestamp * 1000);
-                                // 加上台北時間偏移 (UTC+8)
-                                const taipeiOffset = 8 * 60 * 60 * 1000; // 8小時轉毫秒
-                                const taipeiTime = new Date(date.getTime() + taipeiOffset);
+                            timeFormatter: (() => {
+                                // 性能優化：預先定義 Intl.DateTimeFormat 實例
+                                const formatter = new Intl.DateTimeFormat('zh-TW', {
+                                    timeZone: 'Asia/Taipei',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: false
+                                });
                                 
-                                const month = String(taipeiTime.getUTCMonth() + 1).padStart(2, '0');
-                                const day = String(taipeiTime.getUTCDate()).padStart(2, '0');
-                                const hours = String(taipeiTime.getUTCHours()).padStart(2, '0');
-                                const minutes = String(taipeiTime.getUTCMinutes()).padStart(2, '0');
-                                return `${month}/${day} ${hours}:${minutes}`;
-                            },
+                                // 緩存最近的格式化結果以提高性能
+                                let cache = new Map();
+                                const maxCacheSize = 100;
+                                
+                                return (timestamp) => {
+                                    // 檢查緩存
+                                    if (cache.has(timestamp)) {
+                                        return cache.get(timestamp);
+                                    }
+                                    
+                                    // 格式化時間（自動處理 DST）
+                                    const date = new Date(timestamp * 1000);
+                                    const formatted = formatter.format(date);
+                                    
+                                    // 緩存結果
+                                    if (cache.size >= maxCacheSize) {
+                                        cache.clear(); // 簡單的緩存清理策略
+                                    }
+                                    cache.set(timestamp, formatted);
+                                    
+                                    return formatted;
+                                };
+                            })(),
                         },
                     });
                 } catch (error) {
@@ -979,6 +1005,63 @@
                 this.totalBalanceEl.textContent = this.selectedWallet.total_balance.toFixed(6);
             }
 
+            // 使用 Lightweight Charts 內建的時間範圍方法
+            setChartTimeRange() {
+                const now = Math.floor(Date.now() / 1000); // 當前時間戳（秒）
+                let fromTime;
+
+                // 根據選擇的時間間隔計算起始時間
+                switch (this.currentTimeInterval) {
+                    case '5M':
+                        fromTime = now - (5 * 60);
+                        break;
+                    case '10M':
+                        fromTime = now - (10 * 60);
+                        break;
+                    case '30M':
+                        fromTime = now - (30 * 60);
+                        break;
+                    case '1H':
+                        fromTime = now - (60 * 60);
+                        break;
+                    case '2H':
+                        fromTime = now - (2 * 60 * 60);
+                        break;
+                    case '4H':
+                        fromTime = now - (4 * 60 * 60);
+                        break;
+                    case '8H':
+                        fromTime = now - (8 * 60 * 60);
+                        break;
+                    case '12H':
+                        fromTime = now - (12 * 60 * 60);
+                        break;
+                    case '1D':
+                        fromTime = now - (24 * 60 * 60);
+                        break;
+                    case '1W':
+                        fromTime = now - (7 * 24 * 60 * 60);
+                        break;
+                    case 'ALL':
+                        // 對於 ALL，使用 fitContent 來顯示所有數據
+                        this.chart.timeScale().fitContent();
+                        return;
+                    default:
+                        fromTime = now - (60 * 60); // 預設1小時
+                }
+
+                // 使用 Lightweight Charts 內建的 setVisibleRange 方法
+                this.chart.timeScale().setVisibleRange({
+                    from: fromTime,
+                    to: now
+                });
+
+                console.log(`設置圖表時間範圍: ${this.currentTimeInterval}`, {
+                    from: new Date(fromTime * 1000).toLocaleString(),
+                    to: new Date(now * 1000).toLocaleString()
+                });
+            }
+
             async updateChart() {
                 if (!this.selectedWallet) return;
 
@@ -1031,8 +1114,8 @@
                         }
                     }
                     
-                    // 自動縮放到數據範圍
-                    this.chart.timeScale().fitContent();
+                    // 使用 Lightweight Charts 內建的時間範圍方法
+                    this.setChartTimeRange();
                     
                 } catch (error) {
                     console.error('更新圖表失敗:', error);
@@ -1058,19 +1141,16 @@
                         this.wallets = wallets;
                         this.renderWalletList();
                         
-                        // 更新選中錢包的餘額顯示和圖表
+                        // 更新選中錢包的餘額顯示
                         if (this.selectedWallet) {
                             const updatedWallet = wallets.find(w => w.address === this.selectedWallet.address);
                             if (updatedWallet) {
-                                const oldBalance = this.selectedWallet.total_balance;
                                 this.selectedWallet = updatedWallet;
                                 this.updateBalanceDisplay();
                                 
-                                // 如果餘額發生變化，更新圖表
-                                if (Math.abs(updatedWallet.total_balance - oldBalance) > 0.000001) {
-                                    console.log('餘額發生變化，更新圖表');
-                                    this.updateChart();
-                                }
+                                // 由後端 WebSocket 控制
+                                console.log('收到 WebSocket 更新，更新圖表');
+                                this.updateChart();
                             }
                         }
                     } catch (error) {

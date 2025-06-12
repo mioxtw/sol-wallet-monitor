@@ -9,7 +9,7 @@ use {
     bs58,
     chrono::{DateTime, Utc},
     futures::{stream::StreamExt, sink::SinkExt},
-    log::{error, info, warn},
+    log::{debug, error, info, warn},
     redb::{Database, TableDefinition, ReadableTable},
     serde::{Deserialize, Serialize},
     solana_client::rpc_client::RpcClient,
@@ -52,6 +52,7 @@ struct WalletSummary {
     wsol_balance: f64,
     total_balance: f64,
     last_update: DateTime<Utc>,
+    sampled_history: Vec<BalanceHistory>, // 採樣後的歷史數據
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,9 +208,10 @@ impl WalletBalance {
         self.wsol_balance = amount;
         self.wsol_initialized = true;
         self.last_update = Utc::now();
-        // 初始化時清空現有歷史並添加第一條記錄
-        self.history.clear();
-        self.add_to_history();
+        // 只有在沒有歷史記錄時才添加第一條記錄
+        if self.history.is_empty() {
+            self.add_to_history();
+        }
     }
 
     fn total_balance(&self) -> f64 {
@@ -258,6 +260,19 @@ impl WalletBalance {
     }
 
     fn to_summary(&self) -> WalletSummary {
+        // 對歷史數據進行採樣到100筆
+        let sampled_history = if self.history.len() > 100 {
+            let step = self.history.len() / 100;
+            self.history.iter()
+                .enumerate()
+                .filter(|(i, _)| i % step == 0)
+                .map(|(_, h)| h.clone())
+                .take(100)
+                .collect()
+        } else {
+            self.history.iter().cloned().collect()
+        };
+        
         WalletSummary {
             address: self.address.clone(),
             name: self.name.clone(),
@@ -265,6 +280,7 @@ impl WalletBalance {
             wsol_balance: if self.wsol_initialized { self.wsol_balance } else { 0.0 },
             total_balance: self.total_balance(),
             last_update: self.last_update,
+            sampled_history,
         }
     }
 
@@ -295,11 +311,15 @@ impl WalletBalance {
 type SharedWallets = Arc<Mutex<HashMap<String, WalletBalance>>>;
 type SharedDatabase = Arc<Database>;
 
+// gRPC 流重啟信號
+type GrpcRestartSignal = Arc<Mutex<bool>>;
+
 // 應用狀態結構
 #[derive(Clone)]
 struct AppState {
     wallets: SharedWallets,
     database: SharedDatabase,
+    grpc_restart_signal: GrpcRestartSignal,
 }
 
 // 資料庫操作函數
@@ -415,26 +435,8 @@ async fn get_chart_data(
     let wallets_guard = state.wallets.lock().unwrap();
     let wallet = wallets_guard.get(&params.wallet).ok_or(StatusCode::NOT_FOUND)?;
     
+    // 獲取所有歷史數據，讓前端 Lightweight Charts 處理時間範圍
     let mut history: Vec<_> = wallet.history.iter().collect();
-    
-    // 根據時間間隔篩選數據
-    let now = Utc::now();
-    let filter_time = match params.interval.as_str() {
-        "5M" => now - chrono::Duration::minutes(5),
-        "10M" => now - chrono::Duration::minutes(10),
-        "30M" => now - chrono::Duration::minutes(30),
-        "1H" => now - chrono::Duration::hours(1),
-        "2H" => now - chrono::Duration::hours(2),
-        "4H" => now - chrono::Duration::hours(4),
-        "8H" => now - chrono::Duration::hours(8),
-        "12H" => now - chrono::Duration::hours(12),
-        "1D" => now - chrono::Duration::days(1),
-        "1W" => now - chrono::Duration::weeks(1),
-        "ALL" => now - chrono::Duration::days(365),
-        _ => now - chrono::Duration::hours(1),
-    };
-    
-    history.retain(|h| h.timestamp >= filter_time);
     
     // 排序歷史數據以確保時間順序
     history.sort_by_key(|h| h.timestamp);
@@ -464,50 +466,8 @@ async fn get_chart_data(
     // 去除重複時間戳（保留最新的）
     chart_data.dedup_by_key(|point| point.time);
     
-    // 根據時間範圍進行數據採樣，避免數據點過密
-    let target_points = match params.interval.as_str() {
-        "5M" => 30,     // 5分鐘目標30個點
-        "10M" => 40,    // 10分鐘目標40個點
-        "30M" => 60,    // 30分鐘目標60個點
-        "1H" => 80,     // 1小時目標80個點
-        "2H" => 100,    // 2小時目標100個點
-        "4H" => 120,    // 4小時目標120個點
-        "8H" => 150,    // 8小時目標150個點
-        "12H" => 180,   // 12小時目標180個點
-        "1D" => 200,    // 1天目標200個點
-        "1W" => 250,    // 1週目標250個點
-        "ALL" => 300,   // 全部目標300個點
-        _ => 80,
-    };
-    
-    // 只有當數據點過多時才進行採樣
-    if chart_data.len() > target_points && chart_data.len() > 2 {
-        let sampling_ratio = chart_data.len() as f64 / target_points as f64;
-        let mut sampled_data: Vec<ChartDataPoint> = Vec::new();
-        
-        // 總是包含第一個點
-        sampled_data.push(chart_data[0].clone());
-        
-        // 根據採樣比例選擇中間的點
-        for i in 1..chart_data.len()-1 {
-            let expected_index = i as f64 / sampling_ratio;
-            if (expected_index.floor() as usize) != ((i-1) as f64 / sampling_ratio).floor() as usize {
-                sampled_data.push(chart_data[i].clone());
-            }
-        }
-        
-        // 總是包含最後一個點
-        if chart_data.len() > 1 {
-            sampled_data.push(chart_data[chart_data.len()-1].clone());
-        }
-        
-        info!("📊 圖表數據採樣完成: 原始數據 {} 點 -> 採樣後 {} 點 (目標: {} 點)", 
-              chart_data.len(), sampled_data.len(), target_points);
-        
-        chart_data = sampled_data;
-    } else {
-        info!("📊 圖表數據無需採樣: {} 點 (目標: {} 點)", chart_data.len(), target_points);
-    }
+    // 移除採樣邏輯，返回完整數據
+    info!("📊 圖表數據準備完成: {} 點", chart_data.len());
     
     Ok(Json(chart_data))
 }
@@ -589,7 +549,13 @@ async fn add_wallet(
                 warn!("⚠️ 更新配置文件失敗: {}", e);
             }
             
-            info!("✅ 成功新增錢包: {} ({})", name, &address[..8]);
+            // 觸發 gRPC 流重啟以訂閱新錢包
+            {
+                let mut restart_signal = state.grpc_restart_signal.lock().unwrap();
+                *restart_signal = true;
+            }
+            
+            info!("✅ 成功新增錢包: {} ({}) - 正在重啟gRPC訂閱", name, &address[..8]);
             
             Ok(Json(ApiResponse {
                 success: true,
@@ -630,7 +596,13 @@ async fn delete_wallet(
         warn!("⚠️ 更新配置文件失敗: {}", e);
     }
     
-    info!("✅ 成功刪除錢包: {} ({})", wallet_name, &address[..8]);
+    // 觸發 gRPC 流重啟以停止訂閱已刪除的錢包
+    {
+        let mut restart_signal = state.grpc_restart_signal.lock().unwrap();
+        *restart_signal = true;
+    }
+    
+    info!("✅ 成功刪除錢包: {} ({}) - 正在重啟gRPC訂閱", wallet_name, &address[..8]);
     
     Ok(Json(ApiResponse {
         success: true,
@@ -647,19 +619,47 @@ async fn websocket_handler(
 
 async fn websocket_connection(mut socket: WebSocket, wallets: SharedWallets) {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
+    let mut last_sent_summaries: Option<Vec<WalletSummary>> = None;
     
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let summaries: Vec<WalletSummary> = {
+                let current_summaries: Vec<WalletSummary> = {
                     let wallets_guard = wallets.lock().unwrap();
-                    wallets_guard.values().map(|w| w.to_summary()).collect()
+                    wallets_guard.values().map(|w| {
+                        let summary = w.to_summary();
+                        if w.history.len() > 100 {
+                            info!("📊 WebSocket 採樣: 錢包 {} 歷史數據 {} 點 -> {} 點", 
+                                  &w.name, w.history.len(), summary.sampled_history.len());
+                        }
+                        summary
+                    }).collect()
                 };
                 
-                if let Err(_) = socket.send(axum::extract::ws::Message::Text(
-                    serde_json::to_string(&summaries).unwrap_or_default()
-                )).await {
-                    break;
+                // 只有當資料有變化時才發送（即時更新只發送最新的）
+                let should_send = match &last_sent_summaries {
+                    None => true, // 第一次發送
+                    Some(last) => {
+                        // 檢查是否有任何錢包的餘額或最後更新時間發生變化
+                        current_summaries.iter().zip(last.iter()).any(|(current, last)| {
+                            (current.sol_balance - last.sol_balance).abs() > 0.000001 ||
+                            (current.wsol_balance - last.wsol_balance).abs() > 0.000001 ||
+                            current.last_update != last.last_update
+                        }) || current_summaries.len() != last.len()
+                    }
+                };
+                
+                if should_send {
+                    info!("📡 WebSocket 發送更新: {} 個錢包", current_summaries.len());
+                    if let Err(_) = socket.send(axum::extract::ws::Message::Text(
+                        serde_json::to_string(&current_summaries).unwrap_or_default()
+                    )).await {
+                        break;
+                    }
+                    last_sent_summaries = Some(current_summaries);
+                } else {
+                    // 沒有變化，不發送
+                    debug!("📡 WebSocket 無變化，跳過發送");
                 }
             }
             msg = socket.recv() => {
@@ -795,7 +795,9 @@ fn handle_transaction_update(
                                             wallet.sol_balance,
                                             wallet.wsol_balance,
                                         );
-                                        let _ = save_wallet_history(db, &record);
+                                        if let Err(e) = save_wallet_history(db, &record) {
+                                            warn!("⚠️ 保存SOL交易記錄失敗 {}: {}", wallet.name, e);
+                                        }
                                     }
                                 }
                             }
@@ -841,7 +843,9 @@ fn handle_transaction_update(
                                                 wallet.sol_balance,
                                                 wallet.wsol_balance,
                                             );
-                                            let _ = save_wallet_history(db, &record);
+                                            if let Err(e) = save_wallet_history(db, &record) {
+                                                warn!("⚠️ 保存WSOL交易記錄失敗 {}: {}", wallet.name, e);
+                                            }
                                         }
                                     }
                                 }
@@ -944,6 +948,7 @@ async fn create_grpc_stream(
     grpc_endpoint: String,
     wallets: SharedWallets,
     db: SharedDatabase,
+    restart_signal: GrpcRestartSignal,
 ) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         info!("🔄 嘗試連接到 gRPC 端點: {}", grpc_endpoint);
@@ -958,6 +963,16 @@ async fn create_grpc_stream(
                             let wallets_guard = wallets.lock().unwrap();
                             wallets_guard.keys().cloned().collect()
                         };
+                        
+                        info!("📋 準備訂閱 {} 個錢包:", wallet_addresses.len());
+                        for (i, address) in wallet_addresses.iter().enumerate() {
+                            let wallets_guard = wallets.lock().unwrap();
+                            if let Some(wallet) = wallets_guard.get(address) {
+                                info!("   {}: {} ({})", i + 1, wallet.name, &address[..8]);
+                            } else {
+                                info!("   {}: 未知錢包 ({})", i + 1, &address[..8]);
+                            }
+                        }
                         
                         let mut accounts_filter = HashMap::new();
                         accounts_filter.insert(
@@ -977,7 +992,7 @@ async fn create_grpc_stream(
                                 vote: Some(false),
                                 failed: Some(false),
                                 signature: None,
-                                account_include: wallet_addresses,
+                                account_include: wallet_addresses.clone(),
                                 account_exclude: vec![],
                                 account_required: vec![],
                             },
@@ -1004,11 +1019,28 @@ async fn create_grpc_stream(
                                     continue;
                                 }
                                 
-                                info!("🎯 開始監聽錢包變化...");
+                                info!("✅ gRPC 訂閱請求發送成功！");
+                                info!("🎯 開始監聽 {} 個錢包的變化...", wallet_addresses.len());
+                                
+                                let mut first_message_received = false;
                                 
                                 while let Some(message) = subscribe_rx.next().await {
+                                    // 檢查是否需要重啟
+                                    {
+                                        let mut signal = restart_signal.lock().unwrap();
+                                        if *signal {
+                                            *signal = false; // 重置信號
+                                            info!("🔄 收到重啟信號，正在重新建立gRPC訂閱...");
+                                            break; // 跳出內層循環，重新建立連接
+                                        }
+                                    }
+                                    
                                     match message {
                                         Ok(update) => {
+                                            if !first_message_received {
+                                                info!("🎉 成功接收到第一個gRPC消息，訂閱正常工作！");
+                                                first_message_received = true;
+                                            }
                                             {
                                                 let mut wallets_guard = wallets.lock().unwrap();
                                                 if let Err(e) = handle_transaction_update(update, &mut wallets_guard, &db) {
@@ -1092,11 +1124,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     initialize_wallets_from_rpc(&mut wallets_map, &database, &config.rpc.endpoint).await;
     
     let shared_wallets = Arc::new(Mutex::new(wallets_map));
+    let grpc_restart_signal = Arc::new(Mutex::new(false));
     
     // 創建應用狀態
     let app_state = AppState {
         wallets: shared_wallets.clone(),
         database: database.clone(),
+        grpc_restart_signal: grpc_restart_signal.clone(),
     };
     
     // 創建Web應用
@@ -1112,9 +1146,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 啟動背景任務
     let grpc_wallets = shared_wallets.clone();
     let grpc_database = database.clone();
+    let grpc_signal = grpc_restart_signal.clone();
     let grpc_endpoint = config.grpc.endpoint.clone();
     tokio::spawn(async move {
-        if let Err(e) = create_grpc_stream(grpc_endpoint, grpc_wallets, grpc_database).await {
+        if let Err(e) = create_grpc_stream(grpc_endpoint, grpc_wallets, grpc_database, grpc_signal).await {
             error!("❌ gRPC 流任務失敗: {}", e);
         }
     });
