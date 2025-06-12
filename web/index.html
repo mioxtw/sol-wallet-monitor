@@ -803,6 +803,17 @@
                             rightOffset: 12,     // 右邊留白，確保最新數據點可見
                             visible: true,       // 確保時間軸可見
                             shiftVisibleRangeOnNewBar: true,  // 新數據時自動調整可見範圍
+                            tickMarkFormatter: (timestamp) => {
+                                // 底部刻度時間格式：台北時間
+                                return new Date(timestamp * 1000).toLocaleString('zh-TW', {
+                                    timeZone: 'Asia/Taipei',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: false
+                                });
+                            },
                         },
                         localization: {
                             locale: 'zh-TW',
