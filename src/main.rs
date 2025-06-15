@@ -37,7 +37,7 @@ use {
 
 // 常數定義
 const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
-const MAX_HISTORY_SIZE: usize = 100000;
+const MAX_HISTORY_SIZE: usize = 10000000;
 const DB_FILE: &str = "wallet_history.redb";
 
 // 資料庫表格定義
