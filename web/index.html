@@ -108,6 +108,44 @@
             box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);
         }
 
+        .wallet-sort-controls {
+            padding: 10px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sort-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .sort-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 6px 12px;
+            color: white;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .sort-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .sort-btn.active {
+            background: rgba(255, 215, 0, 0.3);
+            border-color: #ffd700;
+            color: #ffd700;
+        }
+
+        .sort-btn span {
+            font-size: 1rem;
+        }
+
         .wallet-item {
             background: rgba(255, 255, 255, 0.15);
             border-radius: 12px;
@@ -188,6 +226,33 @@
             font-size: 1.2rem;
             font-weight: bold;
             color: #4ade80;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .wallet-profit {
+            font-size: 0.9rem;
+            font-weight: 500;
+            padding: 2px 6px;
+            border-radius: 4px;
+            min-width: fit-content;
+        }
+
+        .wallet-profit.positive {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4caf50;
+        }
+
+        .wallet-profit.negative {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+        }
+
+        .wallet-profit.neutral {
+            background: rgba(158, 158, 158, 0.2);
+            color: #9e9e9e;
         }
 
         .balance-section {
@@ -582,6 +647,16 @@
                     <h2>錢包列表</h2>
                     <button class="add-wallet-btn" id="addWalletBtn" title="新增錢包">+</button>
                 </div>
+                <div class="wallet-sort-controls">
+                    <div class="sort-buttons">
+                        <button class="sort-btn active" id="sortByBalance" title="按總計排序">
+                            <span>💰</span> 總計
+                        </button>
+                        <button class="sort-btn" id="sortByProfit" title="按獲利排序">
+                            <span>📈</span> 獲利
+                        </button>
+                    </div>
+                </div>
                 <div id="walletList"></div>
             </div>
         </div>
@@ -680,6 +755,10 @@
                 this.solBalanceHistory = new Map(); // 每個錢包的SOL餘額歷史
                 this.solConsumptionRates = new Map(); // 每個錢包的消耗速度
                 
+                // 排序相關
+                this.currentSortType = 'balance'; // 'balance' 或 'profit'
+                this.walletProfits = new Map(); // 每個錢包的獲利數據
+                
                 this.initializeElements();
                 this.setupEventListeners();
                 this.initializeChart();
@@ -700,6 +779,10 @@
                 this.timeIntervalButtonsEl = document.getElementById('timeIntervalButtons');
                 this.statusIndicatorEl = document.getElementById('statusIndicator');
                 this.statusTextEl = document.getElementById('statusText');
+                
+                // 排序按鈕
+                this.sortByBalanceBtnEl = document.getElementById('sortByBalance');
+                this.sortByProfitBtnEl = document.getElementById('sortByProfit');
                 
                 // 彈窗元素
                 this.addWalletBtnEl = document.getElementById('addWalletBtn');
@@ -746,7 +829,29 @@
                         e.target.classList.add('active');
                         this.currentTimeInterval = e.target.dataset.interval;
                         this.updateChart();
+                        
+                        // 如果是按獲利排序，需要重新計算獲利並排序
+                        if (this.currentSortType === 'profit') {
+                            this.calculateProfitsForCurrentInterval();
+                            this.sortAndRenderWallets();
+                        }
                     }
+                });
+
+                // 排序按鈕事件
+                this.sortByBalanceBtnEl.addEventListener('click', () => {
+                    this.currentSortType = 'balance';
+                    this.sortByBalanceBtnEl.classList.add('active');
+                    this.sortByProfitBtnEl.classList.remove('active');
+                    this.sortAndRenderWallets();
+                });
+
+                this.sortByProfitBtnEl.addEventListener('click', () => {
+                    this.currentSortType = 'profit';
+                    this.sortByProfitBtnEl.classList.add('active');
+                    this.sortByBalanceBtnEl.classList.remove('active');
+                    this.calculateProfitsForCurrentInterval();
+                    this.sortAndRenderWallets();
                 });
 
                 // 彈窗事件
@@ -929,7 +1034,9 @@
                         this.wallets = data;
                         console.log('獲取到錢包數據:', this.wallets);
                         console.log('錢包數量:', this.wallets ? this.wallets.length : 0);
-                        this.renderWalletList();
+                        
+                        // 使用排序函數渲染錢包列表
+                        this.sortAndRenderWallets();
                         
                         // 自動選擇第一個錢包
                         if (this.wallets.length > 0 && !this.selectedWallet) {
@@ -976,11 +1083,19 @@
                     
                     const updateTime = new Date(wallet.last_update).toLocaleString('zh-TW');
                     
+                    // 獲取獲利信息
+                    const profitInfo = this.walletProfits.get(wallet.address) || { profit: 0, profitClass: 'neutral' };
+                    const profitDisplay = this.currentSortType === 'profit' ? 
+                        `<span class="wallet-profit ${profitInfo.profitClass}">${profitInfo.profit >= 0 ? '+' : ''}${profitInfo.profit.toFixed(6)} SOL</span>` : '';
+                    
                     walletEl.innerHTML = `
                         <button class="delete-wallet-btn" title="刪除錢包">&times;</button>
                         <div class="wallet-address clickable-address" data-address="${wallet.address}" title="點擊複製完整地址">${wallet.address.substring(0, 8)}...${wallet.address.substring(wallet.address.length-8)}</div>
                         <div class="wallet-name">${wallet.name}</div>
-                        <div class="wallet-balance">${wallet.total_balance.toFixed(6)} SOL</div>
+                        <div class="wallet-balance">
+                            <span>${wallet.total_balance.toFixed(6)} SOL</span>
+                            ${profitDisplay}
+                        </div>
                         <div class="wallet-update-time">更新時間: ${updateTime}</div>
                     `;
                     
@@ -1012,7 +1127,7 @@
             selectWallet(wallet) {
                 console.log('選擇錢包:', wallet);
                 this.selectedWallet = wallet;
-                this.renderWalletList();
+                this.renderWalletList(); // 只需要重新渲染以更新active狀態
                 
                 // 切換錢包時先隱藏消耗速度顯示，等數據足夠後再顯示
                 this.solConsumptionRateEl.style.display = 'none';
@@ -1124,6 +1239,84 @@
                     // 數據不足，隱藏消耗速度顯示
                     this.solConsumptionRateEl.style.display = 'none';
                 }
+            }
+
+            // 計算指定時間範圍內的獲利
+            async calculateProfitsForCurrentInterval() {
+                if (!this.wallets || this.wallets.length === 0) return;
+                
+                for (const wallet of this.wallets) {
+                    try {
+                        const response = await fetch(
+                            `/api/chart?wallet=${encodeURIComponent(wallet.address)}&data_type=total&interval=${this.currentTimeInterval}`
+                        );
+                        
+                        if (response.ok) {
+                            const chartData = await response.json();
+                            
+                            if (chartData && chartData.length >= 2) {
+                                // 計算獲利 = 最新值 - 最早值
+                                const sortedData = chartData.sort((a, b) => a.time - b.time);
+                                const earliestValue = sortedData[0].value;
+                                const latestValue = sortedData[sortedData.length - 1].value;
+                                const profit = latestValue - earliestValue;
+                                
+                                // 判斷獲利的顏色類別
+                                let profitClass;
+                                if (profit > 0.000001) {
+                                    profitClass = 'positive';
+                                } else if (profit < -0.000001) {
+                                    profitClass = 'negative';
+                                } else {
+                                    profitClass = 'neutral';
+                                }
+                                
+                                this.walletProfits.set(wallet.address, {
+                                    profit: profit,
+                                    profitClass: profitClass
+                                });
+                            } else {
+                                // 沒有足夠的數據，設為中性
+                                this.walletProfits.set(wallet.address, {
+                                    profit: 0,
+                                    profitClass: 'neutral'
+                                });
+                            }
+                        }
+                    } catch (error) {
+                        console.error(`計算錢包 ${wallet.name} 獲利失敗:`, error);
+                        this.walletProfits.set(wallet.address, {
+                            profit: 0,
+                            profitClass: 'neutral'
+                        });
+                    }
+                }
+            }
+
+            // 排序並渲染錢包列表
+            sortAndRenderWallets() {
+                if (!this.wallets || this.wallets.length === 0) return;
+                
+                // 複製錢包數組進行排序
+                const sortedWallets = [...this.wallets];
+                
+                if (this.currentSortType === 'balance') {
+                    // 按總計餘額排序（從高到低）
+                    sortedWallets.sort((a, b) => b.total_balance - a.total_balance);
+                } else if (this.currentSortType === 'profit') {
+                    // 按獲利排序（從高到低）
+                    sortedWallets.sort((a, b) => {
+                        const profitA = this.walletProfits.get(a.address)?.profit || 0;
+                        const profitB = this.walletProfits.get(b.address)?.profit || 0;
+                        return profitB - profitA;
+                    });
+                }
+                
+                // 更新錢包數組順序
+                this.wallets = sortedWallets;
+                
+                // 渲染錢包列表
+                this.renderWalletList();
             }
 
             // 使用 Lightweight Charts 內建的時間範圍方法
@@ -1266,7 +1459,15 @@
                         } else if (Array.isArray(message)) {
                             // 兼容舊格式（完整錢包列表）
                             this.wallets = message;
-                            this.renderWalletList();
+                            
+                            // 如果是按獲利排序，需要重新計算獲利
+                            if (this.currentSortType === 'profit') {
+                                this.calculateProfitsForCurrentInterval().then(() => {
+                                    this.sortAndRenderWallets();
+                                });
+                            } else {
+                                this.sortAndRenderWallets();
+                            }
                             
                             // 更新選中錢包的餘額顯示
                             if (this.selectedWallet) {
@@ -1336,8 +1537,15 @@
                     }
                 }
                 
-                // 重新渲染錢包列表
-                this.renderWalletList();
+                // 重新渲染錢包列表（保持當前排序）
+                if (this.currentSortType === 'profit') {
+                    // 如果是按獲利排序，需要重新計算獲利後再排序
+                    this.calculateProfitsForCurrentInterval().then(() => {
+                        this.sortAndRenderWallets();
+                    });
+                } else {
+                    this.sortAndRenderWallets();
+                }
                 
                 console.log(`處理了 ${updates.length} 個更新，選中錢包${hasSelectedWalletUpdate ? '有' : '無'}更新`);
             }
