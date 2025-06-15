@@ -241,6 +241,15 @@
             color: #ffd700;
         }
 
+        .consumption-rate {
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: #ff6b6b;
+            margin-top: 4px;
+            opacity: 0.8;
+            text-align: center;
+        }
+
         .chart-section {
             flex: 1;
             background: rgba(255, 255, 255, 0.1);
@@ -583,6 +592,7 @@
                     <div class="balance-card">
                         <div class="balance-label">SOL 餘額</div>
                         <div class="balance-value sol-balance" id="solBalance">0.000000</div>
+                        <div class="consumption-rate" id="solConsumptionRate" style="display: none;"></div>
                     </div>
                     <div class="balance-card">
                         <div class="balance-label">WSOL 餘額</div>
@@ -666,6 +676,10 @@
                 this.ws = null;
                 this.isConnected = false;
                 
+                // SOL消耗速度追蹤
+                this.solBalanceHistory = new Map(); // 每個錢包的SOL餘額歷史
+                this.solConsumptionRates = new Map(); // 每個錢包的消耗速度
+                
                 this.initializeElements();
                 this.setupEventListeners();
                 this.initializeChart();
@@ -679,6 +693,7 @@
                 this.solBalanceEl = document.getElementById('solBalance');
                 this.wsolBalanceEl = document.getElementById('wsolBalance');
                 this.totalBalanceEl = document.getElementById('totalBalance');
+                this.solConsumptionRateEl = document.getElementById('solConsumptionRate');
                 this.chartContainerEl = document.getElementById('chartContainer');
                 this.loadingTextEl = document.getElementById('loadingText');
                 this.dataTypeButtonsEl = document.getElementById('dataTypeButtons');
@@ -998,6 +1013,10 @@
                 console.log('選擇錢包:', wallet);
                 this.selectedWallet = wallet;
                 this.renderWalletList();
+                
+                // 切換錢包時先隱藏消耗速度顯示，等數據足夠後再顯示
+                this.solConsumptionRateEl.style.display = 'none';
+                
                 this.updateBalanceDisplay();
                 this.balanceSectionEl.style.display = 'block';
                 
@@ -1014,6 +1033,97 @@
                 this.solBalanceEl.textContent = this.selectedWallet.sol_balance.toFixed(6);
                 this.wsolBalanceEl.textContent = this.selectedWallet.wsol_balance.toFixed(6);
                 this.totalBalanceEl.textContent = this.selectedWallet.total_balance.toFixed(6);
+                
+                // 更新SOL消耗速度顯示
+                this.updateSolConsumptionRate();
+            }
+
+            updateSolConsumptionRate() {
+                if (!this.selectedWallet) return;
+                
+                const address = this.selectedWallet.address;
+                const currentBalance = this.selectedWallet.sol_balance;
+                const currentTime = Date.now();
+                
+                // 獲取該錢包的歷史記錄
+                if (!this.solBalanceHistory.has(address)) {
+                    this.solBalanceHistory.set(address, []);
+                }
+                
+                const history = this.solBalanceHistory.get(address);
+                
+                // 添加當前餘額記錄
+                history.push({
+                    balance: currentBalance,
+                    timestamp: currentTime
+                });
+                
+                // 保留最近5分鐘的數據
+                const fiveMinutesAgo = currentTime - (5 * 60 * 1000);
+                while (history.length > 0 && history[0].timestamp < fiveMinutesAgo) {
+                    history.shift();
+                }
+                
+                // 計算消耗速度（需要至少2個數據點且時間間隔超過30秒）
+                if (history.length >= 2) {
+                    const latestRecord = history[history.length - 1];
+                    const earliestRecord = history[0];
+                    
+                    const timeDifferenceMs = latestRecord.timestamp - earliestRecord.timestamp;
+                    const timeDifferenceMin = timeDifferenceMs / (1000 * 60); // 轉為分鐘
+                    
+                    // 只有在時間間隔超過30秒且有餘額變化時才計算消耗速度
+                    if (timeDifferenceMin >= 0.5) {
+                        const balanceChange = latestRecord.balance - earliestRecord.balance;
+                        
+                        // 只有當餘額減少時才顯示消耗速度
+                        if (balanceChange < -0.000001) { // 避免浮點數精度問題
+                            const consumptionRatePerMin = balanceChange / timeDifferenceMin; // SOL/分鐘
+                            const consumptionRatePerHour = consumptionRatePerMin * 60; // SOL/小時
+                            const consumptionRatePerDay = consumptionRatePerHour * 24; // SOL/天
+                            
+                            this.solConsumptionRates.set(address, {
+                                perMin: consumptionRatePerMin,
+                                perHour: consumptionRatePerHour,
+                                perDay: consumptionRatePerDay
+                            });
+                            
+                            // 格式化各個時間單位的消耗速度顯示
+                            const formatRate = (rate) => {
+                                if (Math.abs(rate) >= 0.01) {
+                                    return rate.toFixed(3);
+                                } else if (Math.abs(rate) >= 0.001) {
+                                    return rate.toFixed(4);
+                                } else {
+                                    return rate.toFixed(6);
+                                }
+                            };
+                            
+                            const formattedRateMin = formatRate(consumptionRatePerMin);
+                            const formattedRateHour = formatRate(consumptionRatePerHour);
+                            const formattedRateDay = formatRate(consumptionRatePerDay);
+                            
+                            this.solConsumptionRateEl.innerHTML = `
+                                <div style="font-size: 0.85rem; line-height: 1.2;">
+                                    <div>(${formattedRateMin} SOL/分)</div>
+                                    <div>(${formattedRateHour} SOL/時)</div>
+                                    <div>(${formattedRateDay} SOL/日)</div>
+                                </div>
+                            `;
+                            this.solConsumptionRateEl.style.display = 'block';
+                        } else {
+                            // 如果餘額沒有減少，隱藏消耗速度顯示
+                            this.solConsumptionRateEl.style.display = 'none';
+                            this.solConsumptionRates.delete(address);
+                        }
+                    } else {
+                        // 時間間隔太短，隱藏消耗速度顯示
+                        this.solConsumptionRateEl.style.display = 'none';
+                    }
+                } else {
+                    // 數據不足，隱藏消耗速度顯示
+                    this.solConsumptionRateEl.style.display = 'none';
+                }
             }
 
             // 使用 Lightweight Charts 內建的時間範圍方法
