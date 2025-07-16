@@ -810,6 +810,187 @@
             box-shadow: none;
             cursor: not-allowed;
         }
+
+        /* 機器人控制面板樣式 */
+        .bot-control-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .bot-control-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+
+        .bot-control-header h3 {
+            margin: 0;
+            font-size: 1.2rem;
+            color: #ffd700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .bot-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+
+        .bot-status.running {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4caf50;
+            border: 1px solid rgba(76, 175, 80, 0.3);
+        }
+
+        .bot-status.paused {
+            background: rgba(255, 152, 0, 0.2);
+            color: #ff9800;
+            border: 1px solid rgba(255, 152, 0, 0.3);
+        }
+
+        .bot-status.stopped {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+            border: 1px solid rgba(244, 67, 54, 0.3);
+        }
+
+        .bot-status.loading {
+            background: rgba(96, 125, 139, 0.2);
+            color: #607d8b;
+            border: 1px solid rgba(96, 125, 139, 0.3);
+        }
+
+        .status-indicator-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator-dot.running {
+            background: #4caf50;
+        }
+
+        .status-indicator-dot.paused {
+            background: #ff9800;
+        }
+
+        .status-indicator-dot.stopped {
+            background: #f44336;
+        }
+
+        .status-indicator-dot.loading {
+            background: #607d8b;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .bot-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .bot-control-btn {
+            flex: 1;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .bot-control-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-start {
+            background: linear-gradient(45deg, #4caf50, #66bb6a);
+            color: white;
+        }
+
+        .btn-start:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
+        }
+
+        .btn-stop {
+            background: linear-gradient(45deg, #f44336, #ef5350);
+            color: white;
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(244, 67, 54, 0.4);
+        }
+
+        .bot-info {
+            margin-top: 10px;
+            font-size: 0.8rem;
+            opacity: 0.7;
+            text-align: center;
+        }
+
+        /* 手機端適配 */
+        @media (max-width: 768px) {
+            .bot-control-panel {
+                padding: 12px;
+                margin-bottom: 15px;
+            }
+
+            .bot-control-header h3 {
+                font-size: 1.1rem;
+            }
+
+            .bot-status {
+                font-size: 0.8rem;
+                padding: 5px 10px;
+            }
+
+            .bot-controls {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .bot-control-btn {
+                padding: 12px 15px;
+                font-size: 0.85rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .bot-control-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+
+            .bot-control-btn {
+                padding: 10px 12px;
+                font-size: 0.8rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -820,7 +1001,27 @@
 
     <div class="container">
         <div class="sidebar">
-
+            <!-- 機器人控制面板 -->
+            <div class="bot-control-panel">
+                <div class="bot-control-header">
+                    <h3>🤖 機器人控制</h3>
+                    <div class="bot-status loading" id="botStatus">
+                        <div class="status-indicator-dot loading" id="statusDot"></div>
+                        <span id="botStatusText">檢查中...</span>
+                    </div>
+                </div>
+                <div class="bot-controls">
+                    <button class="bot-control-btn btn-start" id="startBotBtn" disabled>
+                        <span>▶️</span> 啟動
+                    </button>
+                    <button class="bot-control-btn btn-stop" id="stopBotBtn" disabled>
+                        <span>⏹️</span> 停止
+                    </button>
+                </div>
+                <div class="bot-info" id="botInfo">
+                    正在獲取機器人狀態...
+                </div>
+            </div>
             
             <div class="wallet-list">
                 <div class="wallet-list-header">
@@ -1993,6 +2194,213 @@
             }
         }
 
+        // 機器人控制功能
+        class BotController {
+            constructor() {
+                this.statusInterval = null;
+                this.botApiBase = this.getBotApiBase();
+                this.initializeElements();
+                this.setupEventListeners();
+                this.startStatusPolling();
+            }
+
+            getBotApiBase() {
+                // 獲取當前主機名，但使用8080端口
+                const currentHost = window.location.hostname;
+                return `http://${currentHost}:8080`;
+            }
+
+            initializeElements() {
+                this.botStatus = document.getElementById('botStatus');
+                this.statusDot = document.getElementById('statusDot');
+                this.statusText = document.getElementById('botStatusText');
+                this.startBtn = document.getElementById('startBotBtn');
+                this.stopBtn = document.getElementById('stopBotBtn');
+                this.botInfo = document.getElementById('botInfo');
+            }
+
+            setupEventListeners() {
+                this.startBtn.addEventListener('click', () => this.startBot());
+                this.stopBtn.addEventListener('click', () => this.stopBot());
+            }
+
+            async checkBotStatus() {
+                try {
+                    const response = await fetch(`${this.botApiBase}/global/status`);
+                    
+                    if (!response.ok) {
+                        if (response.status === 404) {
+                            throw new Error('機器人API未找到 (404)');
+                        } else {
+                            throw new Error(`API錯誤: ${response.status}`);
+                        }
+                    }
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        this.updateStatusDisplay(data.data);
+                    } else {
+                        throw new Error(data.message || '獲取狀態失敗');
+                    }
+                } catch (error) {
+                    console.error('檢查機器人狀態失敗:', error);
+                    let errorMsg = '連接失敗';
+                    
+                    if (error.message.includes('404')) {
+                        errorMsg = '機器人未運行';
+                    } else if (error.message.includes('Failed to fetch')) {
+                        errorMsg = '無法連接到機器人';
+                    } else {
+                        errorMsg = error.message;
+                    }
+                    
+                    this.updateStatusDisplay({
+                        global_state: 'Error',
+                        is_running: false,
+                        priority_info: errorMsg
+                    });
+                }
+            }
+
+            updateStatusDisplay(statusData) {
+                const { global_state, is_running, priority_info } = statusData;
+                
+                // 移除所有狀態類
+                this.botStatus.className = 'bot-status';
+                this.statusDot.className = 'status-indicator-dot';
+                
+                let statusClass = 'loading';
+                let statusText = '未知';
+                let infoText = priority_info || '';
+                
+                if (global_state === 'Paused') {
+                    statusClass = 'stopped';
+                    statusText = '已停止';
+                    this.startBtn.disabled = false;
+                    this.stopBtn.disabled = true;
+                } else if (global_state === 'Active' && is_running) {
+                    statusClass = 'running';
+                    statusText = '運行中';
+                    this.startBtn.disabled = true;
+                    this.stopBtn.disabled = false;
+                } else if (global_state === 'Active' && !is_running) {
+                    statusClass = 'paused';
+                    statusText = '待機中';
+                    this.startBtn.disabled = false;
+                    this.stopBtn.disabled = false;
+                } else {
+                    statusClass = 'loading';
+                    statusText = '檢查中';
+                    this.startBtn.disabled = true;
+                    this.stopBtn.disabled = true;
+                }
+                
+                // 添加對應的狀態類
+                this.botStatus.classList.add(statusClass);
+                this.statusDot.classList.add(statusClass);
+                this.statusText.textContent = statusText;
+                this.botInfo.textContent = infoText;
+            }
+
+            async startBot() {
+                this.startBtn.disabled = true;
+                this.startBtn.innerHTML = '<span>⏳</span> 啟動中...';
+                
+                try {
+                    const response = await fetch(`${this.botApiBase}/global/start`, {
+                        method: 'POST'
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        this.botInfo.textContent = '機器人已啟動';
+                        // 立即檢查狀態
+                        setTimeout(() => this.checkBotStatus(), 500);
+                    } else {
+                        throw new Error(data.message || '啟動失敗');
+                    }
+                } catch (error) {
+                    console.error('啟動機器人失敗:', error);
+                    let errorMsg = '啟動失敗';
+                    
+                    if (error.message.includes('Failed to fetch')) {
+                        errorMsg = '無法連接到機器人服務';
+                    } else {
+                        errorMsg = '啟動失敗: ' + error.message;
+                    }
+                    
+                    this.botInfo.textContent = errorMsg;
+                    this.startBtn.disabled = false;
+                } finally {
+                    this.startBtn.innerHTML = '<span>▶️</span> 啟動';
+                }
+            }
+
+            async stopBot() {
+                this.stopBtn.disabled = true;
+                this.stopBtn.innerHTML = '<span>⏳</span> 停止中...';
+                
+                try {
+                    const response = await fetch(`${this.botApiBase}/global/pause`, {
+                        method: 'POST'
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        this.botInfo.textContent = '機器人已停止';
+                        // 立即檢查狀態
+                        setTimeout(() => this.checkBotStatus(), 500);
+                    } else {
+                        throw new Error(data.message || '停止失敗');
+                    }
+                } catch (error) {
+                    console.error('停止機器人失敗:', error);
+                    let errorMsg = '停止失敗';
+                    
+                    if (error.message.includes('Failed to fetch')) {
+                        errorMsg = '無法連接到機器人服務';
+                    } else {
+                        errorMsg = '停止失敗: ' + error.message;
+                    }
+                    
+                    this.botInfo.textContent = errorMsg;
+                    this.stopBtn.disabled = false;
+                } finally {
+                    this.stopBtn.innerHTML = '<span>⏹️</span> 停止';
+                }
+            }
+
+            startStatusPolling() {
+                console.log('機器人控制器啟動，API地址:', this.botApiBase);
+                
+                // 立即檢查一次
+                this.checkBotStatus();
+                
+                // 每10秒檢查一次狀態
+                this.statusInterval = setInterval(() => {
+                    this.checkBotStatus();
+                }, 10000);
+            }
+
+            stopStatusPolling() {
+                if (this.statusInterval) {
+                    clearInterval(this.statusInterval);
+                    this.statusInterval = null;
+                }
+            }
+        }
+
         // 初始化應用
         function initializeApp() {
             console.log('初始化錢包監控器...');
@@ -2002,6 +2410,10 @@
                 setTimeout(initializeApp, 100);
                 return;
             }
+            
+            // 初始化機器人控制器
+            const botController = new BotController();
+            console.log('機器人控制器已初始化');
             
             const monitor = new WalletMonitor();
             
