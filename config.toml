@@ -19,54 +19,8 @@ port = 3000
 [logging]
 level = "info" 
 
-[[wallets]]
-address = "8MgCrWgTYD14ySiYU5iEotwiNSrFcLhykyVwJhFmy5kH"
-name = "8Mg"
-
-[[wallets]]
-address = "HodL7w84ZMX29GEmNVZMno2oFQzNWuXG5ovQKsP8WFNd"
-name = "HodL"
-
-[[wallets]]
-address = "7dGrdJRYtsNR8UYxZ3TnifXGjGc9eRYLq9sELwYpuuUu"
-name = "7dG"
-
-[[wallets]]
-address = "goopNoaJhhrzxi6oq2j4chcyHKGucAeVZSk4QBA7Gu1"
-name = "goo"
-
-[[wallets]]
-address = "8NpNmntfm9eGHdELmciNPtTVnrAXhScF7vggfzRtTdnr"
-name = "8N"
-
-[[wallets]]
-address = "ALBzE7T2wwaTA8ngCww2R5EzD5C1HjpwHDru2UN6YSeb"
-name = "ALB"
-
-[[wallets]]
-address = "6hEnYQrLDVg7h9mYd6NVBwDh3qd7FuZbMaKBntwkx4Sd"
-name = "6h"
 
 [[wallets]]
 address = "As516ZAsiAzTQuR5JTP5oEucPb3irbQf4tBxKx3MDMpa"
 name = "As51"
 
-[[wallets]]
-address = "4Ekt26mxNBbPQehFqXNSKm5VfZgtMyYaDjg8fAg6vsar"
-name = "4Ek"
-
-[[wallets]]
-address = "8w3XbNorLyU3wS3LApydpKDrYNpgkLNLK7Yn74iqoZDs"
-name = "8w"
-
-[[wallets]]
-address = "8bPPUp6Lja4J7DUn4dYcTXqMpFwxjeVpD9MsV5FZeupz"
-name = "8b"
-
-[[wallets]]
-address = "8VS2f3f7CmiEDFDMqxAKgxCNhhZn7HkJLRDCWET2vXKv"
-name = "8VS"
-
-[[wallets]]
-address = "DADDYS7iLeZ4kVEEbtbogemHooR5GSnf62nATSdEapK7"
-name = "DADDY"

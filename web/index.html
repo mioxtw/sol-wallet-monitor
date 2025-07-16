@@ -449,23 +449,203 @@
         }
 
         @media (max-width: 768px) {
+            body {
+                font-size: 14px;
+                -webkit-text-size-adjust: 100%;
+                -webkit-tap-highlight-color: transparent;
+            }
+            
             .container {
                 flex-direction: column;
+                height: auto;
+                min-height: 100vh;
             }
             
             .sidebar {
                 width: 100%;
                 height: auto;
-                max-height: 40vh;
+                max-height: 50vh;
+                border-right: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+                padding: 15px;
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            
+            .main-content {
+                padding: 15px;
+                flex: 1;
+                min-height: 50vh;
+            }
+            
+            .header h1 {
+                font-size: 1.8rem;
+            }
+            
+            .header p {
+                font-size: 1rem;
             }
             
             .balance-cards {
                 grid-template-columns: 1fr;
+                gap: 10px;
+            }
+            
+            .balance-card {
+                padding: 15px;
+            }
+            
+            .balance-label {
+                font-size: 0.9rem;
+            }
+            
+            .balance-value {
+                font-size: 1.3rem;
             }
             
             .chart-controls {
                 flex-direction: column;
                 align-items: stretch;
+            }
+            
+            .controls-row {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .control-group {
+                margin-bottom: 15px;
+            }
+            
+            .button-group {
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+            
+            .control-button {
+                font-size: 0.8rem;
+                padding: 10px 14px;
+                min-width: 44px;
+                min-height: 44px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            
+            .wallet-item {
+                padding: 12px;
+                margin-bottom: 10px;
+                min-height: 80px;
+            }
+            
+            .wallet-item:hover {
+                transform: none;
+            }
+            
+            .wallet-name {
+                font-size: 1rem;
+            }
+            
+            .wallet-address {
+                font-size: 0.75rem;
+                word-break: break-all;
+                margin-bottom: 8px;
+            }
+            
+            .wallet-balance {
+                font-size: 0.9rem;
+            }
+            
+            .delete-wallet-btn {
+                display: flex !important;
+                top: 5px;
+                right: 5px;
+                width: 20px;
+                height: 20px;
+                font-size: 0.7rem;
+            }
+            
+            .add-wallet-btn {
+                width: 30px;
+                height: 30px;
+                font-size: 1rem;
+            }
+            
+            .sort-btn {
+                padding: 5px 10px;
+                font-size: 0.75rem;
+            }
+            
+            .chart-container {
+                height: 300px;
+            }
+            
+            .connection-status {
+                position: fixed;
+                top: 10px;
+                right: 10px;
+                padding: 6px 12px;
+                font-size: 0.8rem;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 0;
+            }
+            
+            .sidebar {
+                padding: 10px;
+                max-height: 45vh;
+            }
+            
+            .main-content {
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 1.5rem;
+            }
+            
+            .balance-card {
+                padding: 12px;
+            }
+            
+            .balance-value {
+                font-size: 1.1rem;
+            }
+            
+            .wallet-item {
+                min-height: 70px;
+                padding: 10px;
+            }
+            
+            .wallet-address {
+                font-size: 0.7rem;
+                margin-bottom: 6px;
+            }
+            
+            .delete-wallet-btn {
+                width: 18px;
+                height: 18px;
+                font-size: 0.65rem;
+                top: 3px;
+                right: 3px;
+            }
+            
+            .button-group {
+                justify-content: center;
+            }
+            
+            .control-button {
+                font-size: 0.75rem;
+                padding: 8px 12px;
+                min-width: 40px;
+                min-height: 40px;
+            }
+            
+            .chart-container {
+                height: 250px;
             }
         }
 
