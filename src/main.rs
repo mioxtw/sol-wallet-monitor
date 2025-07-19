@@ -31,7 +31,6 @@ use {
         geyser::SubscribeUpdate,
         prelude::{
             CommitmentLevel, SubscribeRequest, SubscribeRequestFilterAccounts,
-            SubscribeRequestFilterTransactions,
             subscribe_update::UpdateOneof,
         },
     },
@@ -958,45 +957,41 @@ async fn initialize_wallets_from_rpc(wallets: &mut HashMap<String, WalletBalance
 
 
 
-// 處理交易更新 (只處理 SOL 餘額變化)
-fn handle_transaction_update(
+// 處理 SOL Account 更新
+fn handle_sol_account_update(
     update: SubscribeUpdate,
     wallets: &mut HashMap<String, WalletBalance>,
+    wallet_addresses: &[String],
     db: &Database,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(UpdateOneof::Transaction(tx_update)) = update.update_oneof {
-        if let Some(transaction) = tx_update.transaction {
-            if let Some(meta) = &transaction.meta {
-                let post_balances = &meta.post_balances;
-                
-                if let Some(tx) = &transaction.transaction {
-                    if let Some(msg) = &tx.message {
-                        // 只處理SOL餘額變化
-                        for (i, account_key) in msg.account_keys.iter().enumerate() {
-                            let address = bs58::encode(account_key).into_string();
-                            
-                            if let Some(wallet) = wallets.get_mut(&address) {
-                                if let Some(&balance) = post_balances.get(i) {
-                                    let old_balance = wallet.sol_balance;
-                                    wallet.update_sol(balance);
-                                    
-                                    if (wallet.sol_balance - old_balance).abs() > 0.000001 {
-                                        wallet.print_balance("SOL交易");
-                                        // 保存到資料庫
-                                        let record = WalletHistoryRecord::new(
-                                            wallet.address.clone(),
-                                            wallet.sol_balance,
-                                            wallet.wsol_balance,
-                                        );
-                                        if let Err(e) = save_wallet_history(db, &record) {
-                                            warn!("⚠️ 保存SOL交易記錄失敗 {}: {}", wallet.name, e);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+    if let Some(UpdateOneof::Account(account_update)) = update.update_oneof {
+        if let Some(account) = account_update.account {
+            let wallet_address = bs58::encode(&account.pubkey).into_string();
+            
+            // 檢查是否是我們監聽的錢包地址
+            if wallet_addresses.contains(&wallet_address) {
+                if let Some(wallet) = wallets.get_mut(&wallet_address) {
+                    let old_balance = wallet.sol_balance;
+                    wallet.update_sol(account.lamports);
+                    
+                    if (wallet.sol_balance - old_balance).abs() > 0.000001 {
+                        info!("💰 錢包 {} SOL 餘額變化: {:.6} SOL (從 {:.6} 到 {:.6})", 
+                              &wallet_address[..8], 
+                              wallet.sol_balance - old_balance, 
+                              old_balance, 
+                              wallet.sol_balance);
                         
-                        // WSOL 餘額變化現在通過專門的 account 更新處理
+                        wallet.print_balance("SOL帳戶更新");
+                        
+                        // 保存到資料庫
+                        let record = WalletHistoryRecord::new(
+                            wallet.address.clone(),
+                            wallet.sol_balance,
+                            wallet.wsol_balance,
+                        );
+                        if let Err(e) = save_wallet_history(db, &record) {
+                            warn!("⚠️ 保存SOL帳戶更新記錄失敗 {}: {}", wallet.name, e);
+                        }
                     }
                 }
             }
@@ -1153,23 +1148,10 @@ async fn create_grpc_stream(
                             },
                         );
 
-                        let mut transactions_filter = HashMap::new();
-                        transactions_filter.insert(
-                            "wallet_transactions".to_string(),
-                            SubscribeRequestFilterTransactions {
-                                vote: Some(false),
-                                failed: Some(false),
-                                signature: None,
-                                account_include: wallet_addresses.clone(),
-                                account_exclude: vec![],
-                                account_required: vec![],
-                            },
-                        );
-
                         let request = SubscribeRequest {
                             accounts: accounts_filter,
                             slots: HashMap::new(),
-                            transactions: transactions_filter,
+                            transactions: HashMap::new(), // 不再監聽交易
                             transactions_status: HashMap::new(),
                             blocks: HashMap::new(),
                             blocks_meta: HashMap::new(),
@@ -1212,22 +1194,15 @@ async fn create_grpc_stream(
                                             {
                                                 let mut wallets_guard = wallets.lock().unwrap();
                                                 
-                                                // 根據更新類型選擇處理函數
-                                                match &update.update_oneof {
-                                                    Some(UpdateOneof::Transaction(_)) => {
-                                                        // 處理交易更新 (SOL 餘額變化)
-                                                        if let Err(e) = handle_transaction_update(update, &mut wallets_guard, &db) {
-                                                            warn!("⚠️ 處理交易更新時出錯: {}", e);
-                                                        }
+                                                // 只處理 Account 更新（SOL 和 WSOL）
+                                                if let Some(UpdateOneof::Account(_)) = &update.update_oneof {
+                                                    // 處理 SOL 帳戶更新
+                                                    if let Err(e) = handle_sol_account_update(update.clone(), &mut wallets_guard, &wallet_addresses, &db) {
+                                                        warn!("⚠️ 處理SOL帳戶更新時出錯: {}", e);
                                                     }
-                                                    Some(UpdateOneof::Account(_)) => {
-                                                        // 處理 WSOL ATA 帳戶更新
-                                                        if let Err(e) = handle_wsol_account_update(update, &mut wallets_guard, &ata_to_wallet_map, &db) {
-                                                            warn!("⚠️ 處理WSOL帳戶更新時出錯: {}", e);
-                                                        }
-                                                    }
-                                                    _ => {
-                                                        // 其他類型的更新暫時忽略
+                                                    // 處理 WSOL ATA 帳戶更新
+                                                    if let Err(e) = handle_wsol_account_update(update, &mut wallets_guard, &ata_to_wallet_map, &db) {
+                                                        warn!("⚠️ 處理WSOL帳戶更新時出錯: {}", e);
                                                     }
                                                 }
                                             }
