@@ -13,8 +13,10 @@ use {
     redb::{Database, TableDefinition, ReadableTable},
     serde::{Deserialize, Serialize},
     solana_client::rpc_client::RpcClient,
+    solana_program::{program_pack::Pack, pubkey::Pubkey as ProgramPubkey},
     solana_sdk::pubkey::Pubkey,
     spl_associated_token_account::get_associated_token_address,
+    spl_token::state::Account as TokenAccount,
     std::{
         collections::{HashMap, VecDeque},
         fs,
@@ -37,6 +39,8 @@ use {
 
 // 常數定義
 const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
+const TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const ASSOCIATED_TOKEN_PROGRAM_ID: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 const MAX_HISTORY_SIZE: usize = 10000000;
 const DB_FILE: &str = "wallet_history.redb";
 
@@ -798,6 +802,93 @@ fn setup_logging(level: &str) {
     env_logger::init();
 }
 
+// 計算錢包的 WSOL ATA 地址
+fn calculate_wsol_ata(wallet_address: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let wallet = ProgramPubkey::from_str(wallet_address)?;
+    let wsol_mint = ProgramPubkey::from_str(WSOL_MINT)?;
+    let associated_program_id = ProgramPubkey::from_str(ASSOCIATED_TOKEN_PROGRAM_ID)?;
+    let token_program_id = ProgramPubkey::from_str(TOKEN_PROGRAM_ID)?;
+    
+    let (ata, _) = ProgramPubkey::find_program_address(
+        &[wallet.as_ref(), token_program_id.as_ref(), wsol_mint.as_ref()],
+        &associated_program_id,
+    );
+    
+    Ok(ata.to_string())
+}
+
+// 計算所有錢包的 WSOL ATA 地址
+fn calculate_all_wsol_atas(wallet_addresses: &[String]) -> Vec<String> {
+    let mut ata_addresses = Vec::new();
+    
+    for wallet_address in wallet_addresses {
+        match calculate_wsol_ata(wallet_address) {
+            Ok(ata) => {
+                info!("💎 錢包 {} 的 WSOL ATA: {}", &wallet_address[..8], &ata[..8]);
+                ata_addresses.push(ata);
+            }
+            Err(e) => {
+                error!("❌ 計算錢包 {} 的 WSOL ATA 失敗: {}", wallet_address, e);
+            }
+        }
+    }
+    
+    ata_addresses
+}
+
+// 處理 WSOL Account 更新
+fn handle_wsol_account_update(
+    update: SubscribeUpdate,
+    wallets: &mut HashMap<String, WalletBalance>,
+    ata_to_wallet_map: &HashMap<String, String>,
+    db: &Database,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(UpdateOneof::Account(account_update)) = update.update_oneof {
+        if let Some(account) = account_update.account {
+            let ata_address = bs58::encode(&account.pubkey).into_string();
+            
+            // 檢查是否是我們監聽的 ATA 地址
+            if let Some(wallet_address) = ata_to_wallet_map.get(&ata_address) {
+                // 解析 token account 數據
+                match TokenAccount::unpack(&account.data) {
+                    Ok(token_account) => {
+                        let wsol_balance = token_account.amount as f64 / 1_000_000_000.0; // WSOL decimals = 9
+                        
+                        if let Some(wallet) = wallets.get_mut(wallet_address) {
+                            let old_balance = wallet.wsol_balance;
+                            wallet.update_wsol(wsol_balance);
+                            
+                            if (wsol_balance - old_balance).abs() > 0.000001 {
+                                info!("💎 錢包 {} WSOL 餘額變化: {:.9} SOL (從 {:.9} 到 {:.9})", 
+                                      &wallet_address[..8], 
+                                      wsol_balance - old_balance, 
+                                      old_balance, 
+                                      wsol_balance);
+                                
+                                wallet.print_balance("WSOL帳戶更新");
+                                
+                                // 保存到資料庫
+                                let record = WalletHistoryRecord::new(
+                                    wallet.address.clone(),
+                                    wallet.sol_balance,
+                                    wallet.wsol_balance,
+                                );
+                                if let Err(e) = save_wallet_history(db, &record) {
+                                    warn!("⚠️ 保存WSOL帳戶更新記錄失敗 {}: {}", wallet.name, e);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("⚠️ 解析 token account 數據失敗: {}", e);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 // 查詢錢包餘額 (初始化用)
 async fn query_wallet_balance(wallet_address: &str, rpc_endpoint: &str) -> Result<(f64, f64), Box<dyn std::error::Error + Send + Sync>> {
     // 使用 Solana RPC Client
@@ -867,7 +958,7 @@ async fn initialize_wallets_from_rpc(wallets: &mut HashMap<String, WalletBalance
 
 
 
-// 處理交易更新
+// 處理交易更新 (只處理 SOL 餘額變化)
 fn handle_transaction_update(
     update: SubscribeUpdate,
     wallets: &mut HashMap<String, WalletBalance>,
@@ -877,12 +968,10 @@ fn handle_transaction_update(
         if let Some(transaction) = tx_update.transaction {
             if let Some(meta) = &transaction.meta {
                 let post_balances = &meta.post_balances;
-                let post_token_balances = &meta.post_token_balances;
-                let pre_token_balances = &meta.pre_token_balances;
                 
                 if let Some(tx) = &transaction.transaction {
                     if let Some(msg) = &tx.message {
-                        // 處理SOL餘額變化
+                        // 只處理SOL餘額變化
                         for (i, account_key) in msg.account_keys.iter().enumerate() {
                             let address = bs58::encode(account_key).into_string();
                             
@@ -907,54 +996,7 @@ fn handle_transaction_update(
                             }
                         }
                         
-                        // 處理WSOL（Token）餘額變化
-                        info!("🪙 檢測到 {} 個 token 餘額變化", post_token_balances.len());
-                        
-                        for post_balance in post_token_balances {
-                            if let Some(ui_token_amount) = &post_balance.ui_token_amount {
-                                // 檢查是否為 WSOL 且屬於目標錢包
-                                let is_wsol = post_balance.mint == WSOL_MINT;
-                                let is_owner = wallets.contains_key(&post_balance.owner);
-                                
-                                if is_wsol && is_owner {
-                                    let owner_address = &post_balance.owner;
-                                    
-                                    info!("🪙 Token變化: mint={}, owner={}, amount={}", 
-                                          &post_balance.mint[..8],
-                                          &owner_address[..8], 
-                                          ui_token_amount.ui_amount);
-                                    
-                                    if let Some(wallet) = wallets.get_mut(owner_address) {
-                                        // 查找對應的 pre balance
-                                        let old_wsol_balance = pre_token_balances.iter()
-                                            .find(|pre| pre.account_index == post_balance.account_index)
-                                            .and_then(|pre| pre.ui_token_amount.as_ref())
-                                            .map(|amount| amount.ui_amount)
-                                            .unwrap_or(0.0);
-                                        
-                                        let new_wsol_balance = ui_token_amount.ui_amount;
-                                        let wsol_balance_change = new_wsol_balance - old_wsol_balance;
-                                        
-                                        if wsol_balance_change.abs() > 0.000001 {
-                                            info!("💎 錢包 {} WSOL 餘額變化: {:.9} SOL (從 {:.9} 到 {:.9})", 
-                                                  &owner_address[..8], wsol_balance_change, old_wsol_balance, new_wsol_balance);
-                                            
-                                            wallet.update_wsol(new_wsol_balance);
-                                            wallet.print_balance("WSOL交易");
-                                            // 保存到資料庫
-                                            let record = WalletHistoryRecord::new(
-                                                wallet.address.clone(),
-                                                wallet.sol_balance,
-                                                wallet.wsol_balance,
-                                            );
-                                            if let Err(e) = save_wallet_history(db, &record) {
-                                                warn!("⚠️ 保存WSOL交易記錄失敗 {}: {}", wallet.name, e);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // WSOL 餘額變化現在通過專門的 account 更新處理
                     }
                 }
             }
@@ -1078,11 +1120,33 @@ async fn create_grpc_stream(
                             }
                         }
                         
+                        // 計算所有錢包的 WSOL ATA 地址
+                        let ata_addresses = calculate_all_wsol_atas(&wallet_addresses);
+                        
+                        // 創建 ATA 到錢包地址的映射
+                        let mut ata_to_wallet_map: HashMap<String, String> = HashMap::new();
+                        for (wallet_addr, ata_addr) in wallet_addresses.iter().zip(ata_addresses.iter()) {
+                            ata_to_wallet_map.insert(ata_addr.clone(), wallet_addr.clone());
+                        }
+                        
+                        info!("💎 準備監聽 {} 個 WSOL ATA 地址", ata_addresses.len());
+                        
                         let mut accounts_filter = HashMap::new();
                         accounts_filter.insert(
                             "wallet_accounts".to_string(),
                             SubscribeRequestFilterAccounts {
                                 account: wallet_addresses.clone(),
+                                owner: vec![],
+                                filters: vec![],
+                                nonempty_txn_signature: None,
+                            },
+                        );
+                        
+                        // 監聽 WSOL ATA 地址
+                        accounts_filter.insert(
+                            "wsol_ata_accounts".to_string(),
+                            SubscribeRequestFilterAccounts {
+                                account: ata_addresses.clone(),
                                 owner: vec![],
                                 filters: vec![],
                                 nonempty_txn_signature: None,
@@ -1147,8 +1211,24 @@ async fn create_grpc_stream(
                                             }
                                             {
                                                 let mut wallets_guard = wallets.lock().unwrap();
-                                                if let Err(e) = handle_transaction_update(update, &mut wallets_guard, &db) {
-                                                    warn!("⚠️ 處理交易更新時出錯: {}", e);
+                                                
+                                                // 根據更新類型選擇處理函數
+                                                match &update.update_oneof {
+                                                    Some(UpdateOneof::Transaction(_)) => {
+                                                        // 處理交易更新 (SOL 餘額變化)
+                                                        if let Err(e) = handle_transaction_update(update, &mut wallets_guard, &db) {
+                                                            warn!("⚠️ 處理交易更新時出錯: {}", e);
+                                                        }
+                                                    }
+                                                    Some(UpdateOneof::Account(_)) => {
+                                                        // 處理 WSOL ATA 帳戶更新
+                                                        if let Err(e) = handle_wsol_account_update(update, &mut wallets_guard, &ata_to_wallet_map, &db) {
+                                                            warn!("⚠️ 處理WSOL帳戶更新時出錯: {}", e);
+                                                        }
+                                                    }
+                                                    _ => {
+                                                        // 其他類型的更新暫時忽略
+                                                    }
                                                 }
                                             }
                                         }
