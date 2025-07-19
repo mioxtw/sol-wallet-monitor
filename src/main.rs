@@ -118,7 +118,7 @@ struct ErrorResponse {
 }
 
 // 配置結構
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct Config {
     grpc: GrpcConfig,
     rpc: RpcConfig,
@@ -127,28 +127,28 @@ struct Config {
     server: ServerConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct GrpcConfig {
     endpoint: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct RpcConfig {
     endpoint: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct WalletConfig {
     address: String,
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct LoggingConfig {
     level: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct ServerConfig {
     host: String,
     port: u16,
@@ -323,6 +323,7 @@ struct AppState {
     wallets: SharedWallets,
     database: SharedDatabase,
     grpc_restart_signal: GrpcRestartSignal,
+    config: Config,
 }
 
 // 資料庫操作函數
@@ -580,7 +581,7 @@ async fn add_wallet(
     let new_wallet = WalletBalance::new(address.to_string(), name.to_string());
     
     // 嘗試初始化錢包餘額 (使用配置中的RPC端點)
-    let rpc_endpoint = "http://127.0.0.1:8899"; // 暫時硬編碼，應該從配置傳入
+    let rpc_endpoint = &state.config.rpc.endpoint;
     match query_wallet_balance(address, rpc_endpoint).await {
         Ok((sol_balance, wsol_balance)) => {
             let mut new_wallet = new_wallet;
@@ -1266,8 +1267,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 初始化錢包追蹤器
     let mut wallets_map = HashMap::new();
-    for wallet_config in config.wallets {
-        let mut wallet = WalletBalance::new(wallet_config.address.clone(), wallet_config.name);
+    for wallet_config in &config.wallets {
+        let mut wallet = WalletBalance::new(wallet_config.address.clone(), wallet_config.name.clone());
         
         // 從資料庫載入歷史數據（但不使用WSOL餘額，因為可能過時）
         if let Some(records) = history_data.get(&wallet_config.address) {
@@ -1275,7 +1276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             wallet.load_history_from_db(records.clone());
         }
         
-        wallets_map.insert(wallet_config.address, wallet);
+        wallets_map.insert(wallet_config.address.clone(), wallet);
     }
     
     // 所有錢包都需要從RPC獲取最新的SOL和WSOL餘額，確保數據準確性
@@ -1290,6 +1291,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         wallets: shared_wallets.clone(),
         database: database.clone(),
         grpc_restart_signal: grpc_restart_signal.clone(),
+        config: config.clone(),
     };
     
     // 創建Web應用

@@ -404,6 +404,120 @@
             position: relative;
         }
 
+        .chart-tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: white;
+            font-size: 0.85rem;
+            pointer-events: none;
+            z-index: 1000;
+            transform: translate(-50%, -100%);
+            margin-top: -10px;
+            min-width: 120px;
+            backdrop-filter: blur(5px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            display: none;
+        }
+
+        .chart-tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: rgba(0, 0, 0, 0.9);
+        }
+
+        .chart-tooltip.tooltip-below::after {
+            top: -10px;
+            border-top-color: transparent;
+            border-bottom-color: rgba(0, 0, 0, 0.9);
+        }
+
+        .tooltip-time {
+            font-size: 0.75rem;
+            opacity: 0.8;
+            margin-bottom: 5px;
+            text-align: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 4px;
+        }
+
+        .tooltip-values {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .tooltip-value {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.8rem;
+        }
+
+        .tooltip-color-indicator {
+            width: 8px;
+            height: 2px;
+            border-radius: 1px;
+        }
+
+        .chart-legend {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 8px;
+            padding: 10px 15px;
+            display: flex;
+            gap: 20px;
+            backdrop-filter: blur(5px);
+            z-index: 10;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85rem;
+            color: white;
+            transition: opacity 0.3s ease;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .legend-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .legend-item.hidden {
+            opacity: 0.4;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 3px;
+            border-radius: 2px;
+        }
+
+        .legend-color.sol {
+            background: #ff6b6b;
+        }
+
+        .legend-color.wsol {
+            background: #4ecdc4;
+        }
+
+        .legend-color.total {
+            background: #ffd700;
+        }
+
         .loading {
             position: absolute;
             top: 50%;
@@ -578,6 +692,45 @@
             
             .chart-container {
                 height: 300px;
+            }
+            
+            .chart-legend {
+                position: static !important;
+                background: rgba(0, 0, 0, 0.8) !important;
+                margin-bottom: 10px;
+                justify-content: center;
+                flex-wrap: wrap;
+                gap: 15px !important;
+            }
+            
+            .legend-item {
+                font-size: 0.8rem !important;
+                gap: 4px !important;
+            }
+            
+            .legend-color {
+                width: 10px !important;
+                height: 2px !important;
+            }
+            
+            .chart-tooltip {
+                font-size: 0.75rem !important;
+                padding: 8px 10px !important;
+                min-width: 100px !important;
+            }
+            
+            .tooltip-time {
+                font-size: 0.7rem !important;
+            }
+            
+            .tooltip-value {
+                font-size: 0.7rem !important;
+                gap: 4px !important;
+            }
+            
+            .tooltip-color-indicator {
+                width: 6px !important;
+                height: 2px !important;
             }
             
             .connection-status {
@@ -1092,6 +1245,24 @@
 
                 <div class="chart-container" id="chartContainer">
                     <div class="loading" id="loadingText">請選擇一個錢包查看圖表</div>
+                    <div class="chart-legend" id="chartLegend" style="display: none;">
+                        <div class="legend-item" data-type="total">
+                            <div class="legend-color total"></div>
+                            <span>總計(SOL+WSOL)</span>
+                        </div>
+                        <div class="legend-item" data-type="sol">
+                            <div class="legend-color sol"></div>
+                            <span>SOL</span>
+                        </div>
+                        <div class="legend-item" data-type="wsol">
+                            <div class="legend-color wsol"></div>
+                            <span>WSOL</span>
+                        </div>
+                    </div>
+                    <div class="chart-tooltip" id="chartTooltip">
+                        <div class="tooltip-time" id="tooltipTime"></div>
+                        <div class="tooltip-values" id="tooltipValues"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1160,6 +1331,10 @@
                 this.timeIntervalButtonsEl = document.getElementById('timeIntervalButtons');
                 this.statusIndicatorEl = document.getElementById('statusIndicator');
                 this.statusTextEl = document.getElementById('statusText');
+                this.chartLegendEl = document.getElementById('chartLegend');
+                this.chartTooltipEl = document.getElementById('chartTooltip');
+                this.tooltipTimeEl = document.getElementById('tooltipTime');
+                this.tooltipValuesEl = document.getElementById('tooltipValues');
                 
                 // 排序按鈕
                 this.sortByBalanceBtnEl = document.getElementById('sortByBalance');
@@ -1178,6 +1353,12 @@
                 // 設置預設值 - 預設顯示總計(SOL+WSOL)
                 this.activeDataTypes = new Set(['total']);
                 this.currentTimeInterval = '1H';
+                
+                // 延遲更新圖例，確保元素已載入
+                setTimeout(() => {
+                    this.updateChartLegend();
+                    this.setupLegendEventListeners();
+                }, 100);
             }
 
             setupEventListeners() {
@@ -1197,6 +1378,7 @@
                         }
                         
                         this.updateChart();
+                        this.updateChartLegend();
                     }
                 });
                 
@@ -1284,6 +1466,16 @@
                         },
                         crosshair: {
                             mode: LightweightCharts.CrosshairMode.Normal,
+                            vertLine: {
+                                width: 1,
+                                color: 'rgba(255, 255, 255, 0.4)',
+                                style: LightweightCharts.LineStyle.Dashed,
+                            },
+                            horzLine: {
+                                width: 1,
+                                color: 'rgba(255, 255, 255, 0.4)',
+                                style: LightweightCharts.LineStyle.Dashed,
+                            },
                         },
                         rightPriceScale: {
                             borderColor: 'rgba(255, 255, 255, 0.3)',
@@ -1377,7 +1569,7 @@
                     this.lineSeries[type] = this.chart.addLineSeries({
                         color: colors[type],
                         lineWidth: 2,
-                        title: names[type],
+                        // 移除 title 屬性，避免標籤遮住線條
                         visible: this.activeDataTypes.has(type),
                         priceFormat: {
                             type: 'price',
@@ -1388,6 +1580,18 @@
                     
                     // 初始化空數據
                     this.lineSeries[type].setData([]);
+                });
+
+                // 設置 crosshair 事件監聽器
+                this.chart.subscribeCrosshairMove((param) => {
+                    this.handleCrosshairMove(param);
+                });
+
+                // 添加鼠標離開圖表容器時隱藏tooltip的事件
+                this.chartContainerEl.addEventListener('mouseleave', () => {
+                    if (this.chartTooltipEl) {
+                        this.chartTooltipEl.style.display = 'none';
+                    }
                 });
 
                 // 響應式設計
@@ -1519,7 +1723,10 @@
                 // 延遲更新圖表，確保UI渲染完成
                 setTimeout(() => {
                     this.loadingTextEl.style.display = 'none';
+                    this.chartLegendEl.style.display = 'flex';
                     this.updateChart();
+                    this.updateChartLegend();
+                    this.setupLegendEventListeners();
                 }, 100);
             }
 
@@ -1532,6 +1739,158 @@
                 
                 // 更新SOL消耗速度顯示
                 this.updateSolConsumptionRate();
+            }
+
+            updateChartLegend() {
+                if (!this.chartLegendEl) return;
+                
+                // 更新每個圖例項目的顯示狀態
+                const legendItems = this.chartLegendEl.querySelectorAll('.legend-item');
+                legendItems.forEach(item => {
+                    const dataType = item.dataset.type;
+                    if (this.activeDataTypes.has(dataType)) {
+                        item.classList.remove('hidden');
+                    } else {
+                        item.classList.add('hidden');
+                    }
+                });
+            }
+
+            setupLegendEventListeners() {
+                if (!this.chartLegendEl) return;
+                
+                // 為每個圖例項目添加點擊事件
+                const legendItems = this.chartLegendEl.querySelectorAll('.legend-item');
+                legendItems.forEach(item => {
+                    item.addEventListener('click', (e) => {
+                        const dataType = item.dataset.type;
+                        
+                        // 切換對應的數據類型
+                        if (this.activeDataTypes.has(dataType)) {
+                            this.activeDataTypes.delete(dataType);
+                        } else {
+                            this.activeDataTypes.add(dataType);
+                        }
+                        
+                        // 同步更新按鈕狀態
+                        const button = this.dataTypeButtonsEl.querySelector(`[data-type="${dataType}"]`);
+                        if (button) {
+                            if (this.activeDataTypes.has(dataType)) {
+                                button.classList.add('active');
+                            } else {
+                                button.classList.remove('active');
+                            }
+                        }
+                        
+                        // 更新圖表和圖例
+                        this.updateChart();
+                        this.updateChartLegend();
+                    });
+                });
+            }
+
+            handleCrosshairMove(param) {
+                if (!param || !param.time || !this.chartTooltipEl) {
+                    if (this.chartTooltipEl) {
+                        this.chartTooltipEl.style.display = 'none';
+                    }
+                    return;
+                }
+
+                try {
+                    // 獲取當前時間點的數據
+                    const tooltipValues = [];
+                    const colors = {
+                        sol: '#ff6b6b',
+                        wsol: '#4ecdc4',
+                        total: '#ffd700'
+                    };
+                    
+                    const names = {
+                        sol: 'SOL',
+                        wsol: 'WSOL',
+                        total: '總計'
+                    };
+
+                    // 為每個活躍的數據類型獲取數值
+                    ['total', 'sol', 'wsol'].forEach(type => {
+                        if (this.activeDataTypes.has(type) && this.lineSeries[type]) {
+                            const data = param.seriesData.get(this.lineSeries[type]);
+                            if (data && typeof data.value === 'number' && !isNaN(data.value) && isFinite(data.value)) {
+                                tooltipValues.push({
+                                    name: names[type],
+                                    value: data.value,
+                                    color: colors[type]
+                                });
+                            }
+                        }
+                    });
+
+                    if (tooltipValues.length === 0) {
+                        this.chartTooltipEl.style.display = 'none';
+                        return;
+                    }
+
+                    // 更新時間顯示（台北時間）
+                    const time = new Date(param.time * 1000);
+                    const timeString = time.toLocaleString('zh-TW', {
+                        timeZone: 'Asia/Taipei',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    });
+                    this.tooltipTimeEl.textContent = timeString;
+
+                    // 更新數值顯示
+                    this.tooltipValuesEl.innerHTML = tooltipValues.map(item => 
+                        `<div class="tooltip-value">
+                            <div class="tooltip-color-indicator" style="background-color: ${item.color}"></div>
+                            <span>${item.name}: ${item.value.toFixed(6)}</span>
+                        </div>`
+                    ).join('');
+
+                    // 獲取鼠標位置並顯示tooltip
+                    if (param.point) {
+                        const chartRect = this.chartContainerEl.getBoundingClientRect();
+                        let left = param.point.x;
+                        let top = param.point.y;
+
+                        // 確保tooltip不會超出容器邊界
+                        const tooltipRect = this.chartTooltipEl.getBoundingClientRect();
+                        const containerWidth = chartRect.width;
+                        const containerHeight = chartRect.height;
+
+                        // 水平邊界檢查
+                        if (left + tooltipRect.width / 2 > containerWidth) {
+                            left = containerWidth - tooltipRect.width / 2 - 10;
+                        }
+                        if (left - tooltipRect.width / 2 < 0) {
+                            left = tooltipRect.width / 2 + 10;
+                        }
+
+                        // 垂直邊界檢查
+                        if (top - tooltipRect.height - 15 < 0) {
+                            top = tooltipRect.height + 25; // 顯示在下方
+                            this.chartTooltipEl.style.transform = 'translate(-50%, 0%)';
+                            this.chartTooltipEl.style.marginTop = '10px';
+                            this.chartTooltipEl.classList.add('tooltip-below');
+                        } else {
+                            this.chartTooltipEl.style.transform = 'translate(-50%, -100%)';
+                            this.chartTooltipEl.style.marginTop = '-10px';
+                            this.chartTooltipEl.classList.remove('tooltip-below');
+                        }
+
+                        this.chartTooltipEl.style.left = `${left}px`;
+                        this.chartTooltipEl.style.top = `${top}px`;
+                        this.chartTooltipEl.style.display = 'block';
+                    }
+                } catch (error) {
+                    console.error('處理 crosshair 移動事件失敗:', error);
+                    this.chartTooltipEl.style.display = 'none';
+                }
             }
 
             updateSolConsumptionRate() {
