@@ -117,6 +117,26 @@ struct ErrorResponse {
     error: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ProfitsQueryParams {
+    interval: String,  // "5M", "10M", "30M", "1H", "2H", "4H", "8H", "12H", "1D", "1W", "ALL"
+    data_type: String, // "sol", "wsol", or "total"
+}
+
+#[derive(Debug, Serialize)]
+struct WalletProfitInfo {
+    address: String,
+    profit: f64,
+    profit_class: String, // "positive", "negative", "neutral"
+}
+
+#[derive(Debug, Serialize)]
+struct ProfitsResponse {
+    interval: String,
+    data_type: String,
+    profits: Vec<WalletProfitInfo>,
+}
+
 // 配置結構
 #[derive(Debug, Deserialize, Clone)]
 struct Config {
@@ -530,6 +550,95 @@ async fn get_chart_data(
     info!("📊 圖表數據準備完成: {} 點 (時間範圍: {})", sampled_data.len(), params.interval);
     
     Ok(Json(sampled_data))
+}
+
+async fn get_wallets_profits(
+    Query(params): Query<ProfitsQueryParams>,
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> Result<Json<ProfitsResponse>, StatusCode> {
+    let wallets_guard = state.wallets.lock().unwrap();
+    let mut profits = Vec::new();
+    
+    info!("📊 批次計算獲利 - 時間間隔: {}, 數據類型: {}, 錢包數: {}", 
+          params.interval, params.data_type, wallets_guard.len());
+    
+    for (address, wallet) in wallets_guard.iter() {
+        // 獲取歷史數據
+        let mut history: Vec<_> = wallet.history.iter().collect();
+        
+        // 排序歷史數據以確保時間順序
+        history.sort_by_key(|h| h.timestamp);
+        
+        // 根據時間範圍過濾數據
+        let now = Utc::now();
+        let filtered_history: Vec<_> = match params.interval.as_str() {
+            "5M" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_minutes() <= 5).collect(),
+            "10M" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_minutes() <= 10).collect(),
+            "30M" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_minutes() <= 30).collect(),
+            "1H" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_hours() <= 1).collect(),
+            "2H" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_hours() <= 2).collect(),
+            "4H" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_hours() <= 4).collect(),
+            "8H" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_hours() <= 8).collect(),
+            "12H" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_hours() <= 12).collect(),
+            "1D" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_days() <= 1).collect(),
+            "1W" => history.into_iter().filter(|h| now.signed_duration_since(h.timestamp).num_weeks() <= 1).collect(),
+            "ALL" | _ => history,
+        };
+        
+        // 計算獲利
+        let profit_info = if filtered_history.len() >= 2 {
+            let earliest = filtered_history.first().unwrap();
+            let latest = filtered_history.last().unwrap();
+            
+            let earliest_value = match params.data_type.as_str() {
+                "sol" => earliest.sol_balance,
+                "wsol" => earliest.wsol_balance,
+                "total" => earliest.total_balance,
+                _ => earliest.total_balance,
+            };
+            
+            let latest_value = match params.data_type.as_str() {
+                "sol" => latest.sol_balance,
+                "wsol" => latest.wsol_balance,
+                "total" => latest.total_balance,
+                _ => latest.total_balance,
+            };
+            
+            let profit = latest_value - earliest_value;
+            
+            // 判斷獲利的顏色類別
+            let profit_class = if profit > 0.000001 {
+                "positive"
+            } else if profit < -0.000001 {
+                "negative"
+            } else {
+                "neutral"
+            };
+            
+            WalletProfitInfo {
+                address: address.clone(),
+                profit,
+                profit_class: profit_class.to_string(),
+            }
+        } else {
+            // 沒有足夠的數據
+            WalletProfitInfo {
+                address: address.clone(),
+                profit: 0.0,
+                profit_class: "neutral".to_string(),
+            }
+        };
+        
+        profits.push(profit_info);
+    }
+    
+    info!("✅ 批次獲利計算完成，處理了 {} 個錢包", profits.len());
+    
+    Ok(Json(ProfitsResponse {
+        interval: params.interval,
+        data_type: params.data_type,
+        profits,
+    }))
 }
 
 async fn add_wallet(
@@ -1300,6 +1409,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/wallets", get(get_wallets).post(add_wallet))
         .route("/api/wallets/:address", get(get_wallet_detail).delete(delete_wallet))
         .route("/api/chart", get(get_chart_data))
+        .route("/api/wallets/profits", get(get_wallets_profits))
         .route("/ws", get(websocket_handler))
         .layer(CorsLayer::permissive())
         .with_state(app_state);

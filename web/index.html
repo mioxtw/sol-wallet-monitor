@@ -1311,6 +1311,11 @@
                 this.currentSortType = 'balance'; // 'balance' 或 'profit'
                 this.walletProfits = new Map(); // 每個錢包的獲利數據
                 
+                // 快取機制
+                this.profitCache = new Map(); // 快取不同時間間隔的獲利數據
+                this.lastCalculatedInterval = null;
+                this.currentDataType = 'total'; // 當前數據類型
+                
                 this.initializeElements();
                 this.setupEventListeners();
                 this.initializeChart();
@@ -1379,6 +1384,19 @@
                         
                         this.updateChart();
                         this.updateChartLegend();
+                        
+                        // 更新當前數據類型 (用於獲利計算，使用第一個活躍的數據類型)
+                        const firstActiveType = this.activeDataTypes.values().next().value || 'total';
+                        if (this.currentDataType !== firstActiveType) {
+                            this.currentDataType = firstActiveType;
+                            
+                            // 如果是按獲利排序，需要重新計算獲利
+                            if (this.currentSortType === 'profit') {
+                                this.calculateProfitsForCurrentInterval().then(() => {
+                                    this.sortAndRenderWallets();
+                                });
+                            }
+                        }
                     }
                 });
                 
@@ -1395,8 +1413,9 @@
                         
                         // 如果是按獲利排序，需要重新計算獲利並排序
                         if (this.currentSortType === 'profit') {
-                            this.calculateProfitsForCurrentInterval();
-                            this.sortAndRenderWallets();
+                            this.calculateProfitsForCurrentInterval().then(() => {
+                                this.sortAndRenderWallets();
+                            });
                         }
                     }
                 });
@@ -1413,8 +1432,9 @@
                     this.currentSortType = 'profit';
                     this.sortByProfitBtnEl.classList.add('active');
                     this.sortByBalanceBtnEl.classList.remove('active');
-                    this.calculateProfitsForCurrentInterval();
-                    this.sortAndRenderWallets();
+                    this.calculateProfitsForCurrentInterval().then(() => {
+                        this.sortAndRenderWallets();
+                    });
                 });
 
                 // 彈窗事件
@@ -1981,50 +2001,79 @@
                 }
             }
 
-            // 計算指定時間範圍內的獲利
+            // 計算指定時間範圍內的獲利 (使用批次API + 快取機制)
             async calculateProfitsForCurrentInterval() {
                 if (!this.wallets || this.wallets.length === 0) return;
                 
-                for (const wallet of this.wallets) {
-                    try {
-                        const response = await fetch(
-                            `/api/chart?wallet=${encodeURIComponent(wallet.address)}&data_type=total&interval=${this.currentTimeInterval}`
-                        );
+                // 檢查快取 - 如果時間間隔和數據類型沒有變化，直接使用快取
+                const cacheKey = `${this.currentTimeInterval}_${this.currentDataType}`;
+                if (this.lastCalculatedInterval === cacheKey && this.profitCache.has(cacheKey)) {
+                    console.log(`🚀 使用快取的獲利數據 (${cacheKey})`);
+                    const cachedProfits = this.profitCache.get(cacheKey);
+                    
+                    // 將快取數據填入 walletProfits
+                    this.walletProfits.clear();
+                    for (const profit of cachedProfits) {
+                        this.walletProfits.set(profit.address, {
+                            profit: profit.profit,
+                            profitClass: profit.profit_class
+                        });
+                    }
+                    return;
+                }
+                
+                try {
+                    console.log(`📊 批次獲取獲利數據 - 間隔: ${this.currentTimeInterval}, 類型: ${this.currentDataType}`);
+                    
+                    // 使用新的批次API
+                    const response = await fetch(
+                        `/api/wallets/profits?interval=${this.currentTimeInterval}&data_type=${this.currentDataType}`
+                    );
+                    
+                    if (response.ok) {
+                        const profitsData = await response.json();
                         
-                        if (response.ok) {
-                            const chartData = await response.json();
-                            
-                            if (chartData && chartData.length >= 2) {
-                                // 計算獲利 = 最新值 - 最早值
-                                const sortedData = chartData.sort((a, b) => a.time - b.time);
-                                const earliestValue = sortedData[0].value;
-                                const latestValue = sortedData[sortedData.length - 1].value;
-                                const profit = latestValue - earliestValue;
-                                
-                                // 判斷獲利的顏色類別
-                                let profitClass;
-                                if (profit > 0.000001) {
-                                    profitClass = 'positive';
-                                } else if (profit < -0.000001) {
-                                    profitClass = 'negative';
-                                } else {
-                                    profitClass = 'neutral';
-                                }
-                                
-                                this.walletProfits.set(wallet.address, {
-                                    profit: profit,
-                                    profitClass: profitClass
-                                });
-                            } else {
-                                // 沒有足夠的數據，設為中性
-                                this.walletProfits.set(wallet.address, {
-                                    profit: 0,
-                                    profitClass: 'neutral'
-                                });
-                            }
+                        console.log(`✅ 成功獲取 ${profitsData.profits.length} 個錢包的獲利數據`);
+                        
+                        // 清空現有數據
+                        this.walletProfits.clear();
+                        
+                        // 填入新數據
+                        for (const profit of profitsData.profits) {
+                            this.walletProfits.set(profit.address, {
+                                profit: profit.profit,
+                                profitClass: profit.profit_class
+                            });
                         }
-                    } catch (error) {
-                        console.error(`計算錢包 ${wallet.name} 獲利失敗:`, error);
+                        
+                        // 更新快取
+                        this.profitCache.set(cacheKey, profitsData.profits);
+                        this.lastCalculatedInterval = cacheKey;
+                        
+                        // 限制快取大小 (保留最近5個查詢結果)
+                        if (this.profitCache.size > 5) {
+                            const firstKey = this.profitCache.keys().next().value;
+                            this.profitCache.delete(firstKey);
+                        }
+                        
+                    } else {
+                        console.error('❌ 獲取獲利數據失敗:', response.status, response.statusText);
+                        
+                        // 失敗時將所有錢包設為中性
+                        this.walletProfits.clear();
+                        for (const wallet of this.wallets) {
+                            this.walletProfits.set(wallet.address, {
+                                profit: 0,
+                                profitClass: 'neutral'
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.error('❌ 批次獲取獲利數據失敗:', error);
+                    
+                    // 失敗時將所有錢包設為中性
+                    this.walletProfits.clear();
+                    for (const wallet of this.wallets) {
                         this.walletProfits.set(wallet.address, {
                             profit: 0,
                             profitClass: 'neutral'
